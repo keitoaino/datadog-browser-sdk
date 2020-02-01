@@ -9,7 +9,7 @@ Datadog browser logs library.
 ### NPM
 
 ```
-import { datadogLogs } from '@datadog/browser-logs'
+import { datadogLogs } from '@keitoaino/datadog-browser-logs'
 datadogLogs.init({
   clientToken: 'XXX',
   datacenter: 'us',
@@ -87,7 +87,7 @@ Types are compatible with TypeScript >= 3.0.
 For earlier version, you can import js sources and use global variable to avoid any compilation issue:
 
 ```
-import '@datadog/browser-logs/bundle/datadog-logs-us';
+import '@keitoaino/datadog-browser-logs/bundle/datadog-logs-us';
 
 window.DD_LOGS.init({
   clientToken: 'XXX',

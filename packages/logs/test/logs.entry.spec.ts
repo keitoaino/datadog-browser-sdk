@@ -1,4 +1,4 @@
-import { monitor, stopSessionManagement } from '@datadog/browser-core'
+import { monitor, stopSessionManagement } from '@keitoaino/datadog-browser-core'
 import { LogsGlobal } from '../src'
 
 describe('logs entry', () => {

@@ -1,4 +1,4 @@
-import { RequestDetails } from '@datadog/browser-core'
+import { RequestDetails } from '@keitoaino/datadog-browser-core'
 
 interface Timing {
   startTime: number

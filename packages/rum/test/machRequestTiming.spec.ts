@@ -1,4 +1,4 @@
-import { isIE, RequestDetails } from '@datadog/browser-core'
+import { isIE, RequestDetails } from '@keitoaino/datadog-browser-core'
 
 import { matchRequestTiming } from '../src/matchRequestTiming'
 

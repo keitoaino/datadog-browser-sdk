@@ -9,7 +9,7 @@ import {
   monitor,
   startRequestCollection,
   UserConfiguration,
-} from '@datadog/browser-core'
+} from '@keitoaino/datadog-browser-core'
 import lodashAssign from 'lodash.assign'
 
 import { buildEnv } from './buildEnv'

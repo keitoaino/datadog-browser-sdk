@@ -6,7 +6,7 @@ import {
   Omit,
   PerformanceObserverStubBuilder,
   RequestDetails,
-} from '@datadog/browser-core'
+} from '@keitoaino/datadog-browser-core'
 import sinon from 'sinon'
 
 import { LifeCycle, LifeCycleEventType } from '../src/lifeCycle'

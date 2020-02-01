@@ -1,4 +1,4 @@
-import { Configuration, performDraw, startSessionManagement } from '@datadog/browser-core'
+import { Configuration, performDraw, startSessionManagement } from '@keitoaino/datadog-browser-core'
 
 export const LOGGER_COOKIE_NAME = '_dd_l'
 

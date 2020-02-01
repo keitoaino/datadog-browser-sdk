@@ -5,7 +5,7 @@ import {
   SESSION_COOKIE_NAME,
   setCookie,
   stopSessionManagement,
-} from '@datadog/browser-core'
+} from '@keitoaino/datadog-browser-core'
 
 import { LOGGER_COOKIE_NAME, LoggerSessionType, startLoggerSession } from '../src/loggerSession'
 

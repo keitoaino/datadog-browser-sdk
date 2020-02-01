@@ -1,4 +1,4 @@
-import { getRelativeTime, monitor } from '@datadog/browser-core'
+import { getRelativeTime, monitor } from '@keitoaino/datadog-browser-core'
 
 import { LifeCycle, LifeCycleEventType } from './lifeCycle'
 import { RumSession } from './rumSession'

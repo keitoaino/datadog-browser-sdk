@@ -7,7 +7,7 @@ Datadog browser rum library.
 ### NPM
 
 ```
-import { datadogRum } from '@datadog/browser-rum'
+import { datadogRum } from '@keitoaino/datadog-browser-rum'
 datadogRum.init({
   applicationId: 'XXX',
   clientToken: 'XXX',
@@ -69,7 +69,7 @@ Types are compatible with TypeScript >= 3.0.
 For earlier version, you can import js sources and use global variable to avoid any compilation issue:
 
 ```
-import '@datadog/browser-rum/bundle/datadog-rum-us';
+import '@keitoaino/datadog-browser-rum/bundle/datadog-rum-us';
 
 window.DD_RUM.init({
   applicationId: 'XXX',

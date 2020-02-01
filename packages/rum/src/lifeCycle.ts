@@ -1,4 +1,4 @@
-import { ErrorMessage, RequestDetails } from '@datadog/browser-core'
+import { ErrorMessage, RequestDetails } from '@keitoaino/datadog-browser-core'
 import { UserAction } from './rum'
 
 export enum LifeCycleEventType {

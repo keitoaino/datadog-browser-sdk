@@ -1,4 +1,4 @@
-import { isIE, stopSessionManagement } from '@datadog/browser-core'
+import { isIE, stopSessionManagement } from '@keitoaino/datadog-browser-core'
 
 import { RumGlobal, RumUserConfiguration } from '../src/rum.entry'
 

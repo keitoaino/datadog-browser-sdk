@@ -1,4 +1,4 @@
-import { addMonitoringMessage, generateUUID, monitor, msToNs, throttle } from '@datadog/browser-core'
+import { addMonitoringMessage, generateUUID, monitor, msToNs, throttle } from '@keitoaino/datadog-browser-core'
 
 import { LifeCycle, LifeCycleEventType } from './lifeCycle'
 import { PerformancePaintTiming, RumEvent, RumEventCategory } from './rum'

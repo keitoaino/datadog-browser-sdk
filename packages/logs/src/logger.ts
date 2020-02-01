@@ -9,7 +9,7 @@ import {
   HttpRequest,
   monitored,
   noop,
-} from '@datadog/browser-core'
+} from '@keitoaino/datadog-browser-core'
 import lodashMerge from 'lodash.merge'
 
 import { LoggerSession } from './loggerSession'
