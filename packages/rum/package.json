@@ -5,6 +5,9 @@
   "main": "cjs/index.js",
   "module": "esm/index.js",
   "types": "cjs/index.d.ts",
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "run-p build:cjs build:esm build:bundle",
     "build:bundle": "rm -rf bundle && webpack --config webpack.config.js --mode=production && yarn replace-build-env bundle",
