@@ -1,6 +1,6 @@
 import { ErrorContext, HttpContext, MonitoringMessage } from '@datadog/browser-core'
 import { LogsMessage } from '@datadog/browser-logs'
-import { RumEvent, RumViewEvent } from '@datadog/browser-rum'
+import { RumEvent, RumResourceEvent, RumViewEvent } from '@datadog/browser-rum'
 import * as request from 'request'
 
 export interface ServerErrorMessage {
@@ -134,13 +134,17 @@ export function sortByMessage(a: { message: string }, b: { message: string }) {
 }
 
 export async function renewSession() {
+  await expireSession()
+  const button = await $('button')
+  await button.click()
+  expect(await findSessionCookie()).toBeDefined()
+}
+
+export async function expireSession() {
   await deleteAllCookies()
   expect(await findSessionCookie()).not.toBeDefined()
   // Cookies are cached for 1s, wait until the cache expires
   await browser.pause(1100)
-  const button = await $('button')
-  await button.click()
-  expect(await findSessionCookie()).toBeDefined()
 }
 
 // wdio method does not work for some browsers
@@ -159,4 +163,13 @@ async function findSessionCookie() {
   const cookies = (await browser.getCookies()) || []
   // tslint:disable-next-line: no-unsafe-any
   return cookies.find((cookie: any) => cookie.name === '_dd')
+}
+
+export function expectToHaveValidTimings(resourceEvent: RumResourceEvent) {
+  expect((resourceEvent as any).date).toBeGreaterThan(0)
+  expect(resourceEvent.duration).toBeGreaterThan(0)
+  const performance = resourceEvent.http.performance!
+  expect(performance.connect.start).toBeGreaterThanOrEqual(0)
+  expect(performance.dns.start).toBeGreaterThanOrEqual(0)
+  expect(performance.download.start).toBeGreaterThan(0)
 }

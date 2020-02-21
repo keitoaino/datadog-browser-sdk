@@ -3,6 +3,8 @@ import { RumEventCategory, RumResourceEvent, RumViewEvent } from '@datadog/brows
 import {
   browserExecute,
   browserExecuteAsync,
+  expectToHaveValidTimings,
+  expireSession,
   flushBrowserLogs,
   flushEvents,
   renewSession,
@@ -16,7 +18,7 @@ import {
 
 beforeEach(async () => {
   // tslint:disable-next-line: no-unsafe-any
-  await browser.url(`/${(browser as any).config.e2eMode}-e2e-page.html`)
+  await browser.url(`/${(browser as any).config.e2eMode}-e2e-page.html?cb=${Date.now()}`)
 })
 
 afterEach(tearDown)
@@ -95,7 +97,7 @@ describe('rum', () => {
     expect(timing.http.method).toEqual('GET')
     expect((timing.http as any).status_code).toEqual(200)
     expect(timing.duration).toBeGreaterThan(0)
-    expect(timing.http.performance!.download.start).toBeGreaterThan(0)
+    expect(timing.http.performance!.download!.start).toBeGreaterThan(0)
   })
 
   it('should send performance timings along the view events', async () => {
@@ -112,6 +114,32 @@ describe('rum', () => {
     expect((measures as any).load_event_end).toBeGreaterThan(0)
   })
 
+  it('should retrieve early requests timings', async () => {
+    await flushEvents()
+    const events = await waitServerRumEvents()
+
+    const resourceEvent = events.find(
+      (event) => event.evt.category === 'resource' && (event as RumResourceEvent).http.url.includes('empty.css')
+    ) as RumResourceEvent
+
+    expect(resourceEvent as any).not.toBe(undefined)
+    expectToHaveValidTimings(resourceEvent)
+  })
+
+  it('should retrieve initial document timings', async () => {
+    const pageUrl = await browser.getUrl()
+    await flushEvents()
+    const events = await waitServerRumEvents()
+
+    const resourceEvent = events.find(
+      (event) => event.evt.category === 'resource' && (event as RumResourceEvent).resource.kind === 'document'
+    ) as RumResourceEvent
+
+    expect(resourceEvent as any).not.toBe(undefined)
+    expect(resourceEvent.http.url).toBe(pageUrl)
+    expectToHaveValidTimings(resourceEvent)
+  })
+
   it('should create a new View when the session is renewed', async () => {
     await renewSession()
     await flushEvents()
@@ -123,6 +151,26 @@ describe('rum', () => {
     expect(viewEvents.length).toBe(2)
     expect(viewEvents[0].session_id).not.toBe(viewEvents[1].session_id)
     expect(viewEvents[0].view.id).not.toBe(viewEvents[1].view.id)
+  })
+
+  it('should not send events when session is expired', async () => {
+    await expireSession()
+
+    await browserExecuteAsync((baseUrl, done) => {
+      const xhr = new XMLHttpRequest()
+      xhr.addEventListener('load', () => done(undefined))
+      xhr.open('GET', `${baseUrl}/ok`)
+      xhr.send()
+    }, browser.options.baseUrl!)
+
+    await flushEvents()
+
+    const timing = (await waitServerRumEvents()).find(
+      (event) =>
+        event.evt.category === 'resource' && (event as RumResourceEvent).http.url === `${browser.options.baseUrl}/ok`
+    ) as RumResourceEvent
+
+    expect(timing).not.toBeDefined()
   })
 })
 
