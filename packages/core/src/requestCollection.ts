@@ -66,7 +66,7 @@ export function trackXhr(observable: RequestObservable) {
         method: this._datadog_xhr.method,
         response: this.response as string | undefined,
         status: this.status,
-        traceId: getTraceId(),
+        traceId: getTraceIdFromResponse(this),
         type: RequestType.XHR,
         url: normalizeUrl(this._datadog_xhr.url),
       })
@@ -148,6 +148,10 @@ export function isRejected(request: RequestDetails) {
 
 export function isServerError(request: RequestDetails) {
   return request.status >= 500
+}
+
+function getTraceIdFromResponse(response: BrowserXHR): number | undefined {
+  return Number(response.getResponseHeader('trace-id')) || getTraceId();
 }
 
 /**
