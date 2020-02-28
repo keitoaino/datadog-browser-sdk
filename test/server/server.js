@@ -12,7 +12,7 @@ const rumConfig = require('../../packages/rum/webpack.config')
 const fakeBackend = require('./fake-backend')
 const buildEnv = require('../../scripts/build-env')
 
-let port = 3000
+let port = process.env.PORT || 3000
 
 morgan.token('body', (req, res) => extractBody(req, res))
 const stream = fs.createWriteStream(path.join(__dirname, 'test-server.log'))
@@ -31,9 +31,9 @@ if (process.env.ENV === 'development') {
   // e2e tests
   app.use(express.static(path.join(__dirname, '../../packages/logs/bundle')))
   app.use(express.static(path.join(__dirname, '../../packages/rum/bundle')))
-  app.use(bodyParser.text())
-  fakeBackend(app)
 }
+app.use(bodyParser.text())
+fakeBackend(app)
 
 app.listen(port, () => console.log(`server listening on port ${port}.`))
 

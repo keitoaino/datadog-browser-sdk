@@ -72,9 +72,9 @@ export function trackXhr(observable: RequestObservable) {
       })
     }
 
-    const originalOnreadystatechange = this.onreadystatechange;
+    const originalOnreadystatechange = this.onreadystatechange
 
-    this.onreadystatechange = function () {
+    this.onreadystatechange = function() {
       if (this.readyState === XMLHttpRequest.DONE) {
         monitor(reportXhr)()
       }
@@ -82,7 +82,7 @@ export function trackXhr(observable: RequestObservable) {
       if (originalOnreadystatechange) {
         originalOnreadystatechange.apply(this, arguments as any)
       }
-    };
+    }
 
     return originalSend.apply(this, arguments as any)
   }

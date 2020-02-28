@@ -1,11 +1,4 @@
-import {
-  addMonitoringMessage,
-  Configuration,
-  includes,
-  msToNs,
-  ResourceKind,
-  startsWith
-} from '@keitoaino/datadog-browser-core'
+import { addMonitoringMessage, Configuration, includes, msToNs, ResourceKind } from '@keitoaino/datadog-browser-core'
 
 import { PerformanceResourceDetails } from './rum'
 
@@ -97,9 +90,13 @@ export function isValidResource(url: string, configuration: Configuration) {
 
 function isBrowserAgentRequest(url: string, configuration: Configuration) {
   return (
-    startsWith(url, configuration.logsEndpoint) ||
-    startsWith(url, configuration.rumEndpoint) ||
-    startsWith(url, configuration.traceEndpoint) ||
-    (configuration.internalMonitoringEndpoint && startsWith(url, configuration.internalMonitoringEndpoint))
+    haveSameOrigin(url, configuration.logsEndpoint) ||
+    haveSameOrigin(url, configuration.rumEndpoint) ||
+    haveSameOrigin(url, configuration.traceEndpoint) ||
+    (configuration.internalMonitoringEndpoint && haveSameOrigin(url, configuration.internalMonitoringEndpoint))
   )
+}
+
+function haveSameOrigin(url1: string, url2: string) {
+  return new URL(url1).origin === new URL(url2).origin
 }
