@@ -19,6 +19,7 @@ export interface ErrorMessage {
     error: ErrorContext
     http?: HttpContext
   }
+  trace_id?: number;
 }
 
 export interface ErrorContext {
@@ -183,6 +184,7 @@ export function trackNetworkError(
         },
         message: `${format(request.type)} error ${request.method} ${request.url}`,
         startTime: request.startTime,
+        trace_id: request.traceId
       })
     }
   })
