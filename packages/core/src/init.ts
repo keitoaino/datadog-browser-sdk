@@ -52,11 +52,12 @@ export function checkCookiesAuthorized() {
 }
 
 export function checkIsNotLocalFile() {
-  if (isLocalFile()) {
-    console.error('Execution is not allowed in the current context.')
-    return false
-  }
-  return true
+  return true // make it work with cordova
+  // if (isLocalFile()) {
+  //   console.error('Execution is not allowed in the current context.')
+  //   return false
+  // }
+  // return true
 }
 
 function isLocalFile() {
