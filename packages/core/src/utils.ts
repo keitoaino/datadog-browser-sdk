@@ -191,11 +191,22 @@ export function isNumber(value: unknown): value is number {
  * Related issue in Firefox: https://bugzilla.mozilla.org/show_bug.cgi?id=1429926
  */
 export function getRelativeTime(timestamp: number) {
-  return timestamp - performance.timing.navigationStart
+  return timestamp - getNavigationStart()
 }
 
 export function getTimestamp(relativeTime: number) {
-  return Math.floor(performance.timing.navigationStart + relativeTime)
+  return Math.floor(getNavigationStart() + relativeTime)
+}
+
+/**
+ * Navigation start slightly change on some rare cases
+ */
+let navigationStart: number | undefined
+export function getNavigationStart() {
+  if (navigationStart === undefined) {
+    navigationStart = performance.timing.navigationStart
+  }
+  return navigationStart
 }
 
 export function objectValues(object: { [key: string]: unknown }) {
@@ -209,4 +220,20 @@ export function objectValues(object: { [key: string]: unknown }) {
 export function getGlobalObject<T>(): T {
   // tslint:disable-next-line: function-constructor no-function-constructor-with-string-args
   return (typeof globalThis === 'object' ? globalThis : Function('return this')()) as T
+}
+
+export function getLocationOrigin() {
+  return getLinkElementOrigin(window.location)
+}
+
+/**
+ * IE fallback
+ * https://developer.mozilla.org/en-US/docs/Web/API/HTMLHyperlinkElementUtils/origin
+ */
+export function getLinkElementOrigin(element: Location | HTMLAnchorElement | URL) {
+  if (element.origin) {
+    return element.origin
+  }
+  const sanitizedHost = element.host.replace(/(:80|:443)$/, '')
+  return `${element.protocol}//${sanitizedHost}`
 }

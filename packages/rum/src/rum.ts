@@ -56,14 +56,15 @@ interface PerformanceResourceDetailsElement {
 
 export interface PerformanceResourceDetails {
   redirect?: PerformanceResourceDetailsElement
-  dns: PerformanceResourceDetailsElement
-  connect: PerformanceResourceDetailsElement
+  dns?: PerformanceResourceDetailsElement
+  connect?: PerformanceResourceDetailsElement
   ssl?: PerformanceResourceDetailsElement
   firstByte: PerformanceResourceDetailsElement
   download: PerformanceResourceDetailsElement
 }
 
 export interface RumResourceEvent {
+  date: number
   duration: number
   evt: {
     category: RumEventCategory.RESOURCE
@@ -196,7 +197,7 @@ function startRumBatch(
   globalContextProvider: () => Context
 ) {
   const batch = new Batch<Context>(
-    new HttpRequest(configuration.rumEndpoint, configuration.batchBytesLimit, configuration.enableExperimentalFeatures),
+    new HttpRequest(configuration.rumEndpoint, configuration.batchBytesLimit, true),
     configuration.maxBatchSize,
     configuration.batchBytesLimit,
     configuration.maxMessageSize,
@@ -309,7 +310,7 @@ function trackPerformanceTiming(
 export function handleResourceEntry(
   configuration: Configuration,
   entry: PerformanceResourceTiming,
-  addRumEvent: (event: RumEvent) => void,
+  addRumEvent: (event: RumResourceEvent) => void,
   lifeCycle: LifeCycle
 ) {
   if (!isValidResource(entry.name, configuration)) {
