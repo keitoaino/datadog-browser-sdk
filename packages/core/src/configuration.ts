@@ -1,13 +1,13 @@
 import { BuildEnv, Datacenter, Environment } from './init'
-import { ONE_KILO_BYTE, ONE_SECOND } from './utils'
+import { includes, ONE_KILO_BYTE, ONE_SECOND } from './utils'
 
 export const DEFAULT_CONFIGURATION = {
-  enableExperimentalFeatures: false,
   isCollectingError: true,
   maxErrorsByMinute: 3000,
   maxInternalMonitoringMessagesPerPage: 15,
   resourceSampleRate: 100,
   sampleRate: 100,
+  silentMultipleInit: false,
 
   /**
    * arbitrary value, byte precision not needed
@@ -41,7 +41,8 @@ export interface UserConfiguration {
   sampleRate?: number
   resourceSampleRate?: number
   datacenter?: Datacenter
-  enableExperimentalFeatures?: boolean
+  enableExperimentalFeatures?: string[]
+  silentMultipleInit?: boolean
 
   // Below is only taken into account for e2e-test bundle.
   internalMonitoringEndpoint?: string
@@ -54,6 +55,8 @@ export type Configuration = typeof DEFAULT_CONFIGURATION & {
   rumEndpoint: string
   traceEndpoint: string
   internalMonitoringEndpoint?: string
+
+  isEnabled: (feature: string) => boolean
 }
 
 interface TransportConfiguration {
@@ -71,7 +74,14 @@ export function buildConfiguration(userConfiguration: UserConfiguration, buildEn
     version: buildEnv.version,
   }
 
+  const enableExperimentalFeatures = Array.isArray(userConfiguration.enableExperimentalFeatures)
+    ? userConfiguration.enableExperimentalFeatures
+    : []
+
   const configuration: Configuration = {
+    isEnabled: (feature: string) => {
+      return includes(enableExperimentalFeatures, feature)
+    },
     logsEndpoint: getEndpoint('browser', transportConfiguration),
     rumEndpoint: getEndpoint('rum', transportConfiguration),
     traceEndpoint: getEndpoint('public-trace', transportConfiguration),
@@ -95,10 +105,6 @@ export function buildConfiguration(userConfiguration: UserConfiguration, buildEn
 
   if ('resourceSampleRate' in userConfiguration) {
     configuration.resourceSampleRate = userConfiguration.resourceSampleRate!
-  }
-
-  if ('enableExperimentalFeatures' in userConfiguration) {
-    configuration.enableExperimentalFeatures = userConfiguration.enableExperimentalFeatures!
   }
 
   if (transportConfiguration.env === 'e2e-test') {

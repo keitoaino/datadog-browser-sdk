@@ -20,7 +20,7 @@
     "no-implicit-dependencies": [
       true,
       "dev",
-      ["@datadog/browser-logs", "@datadog/browser-rum", "@datadog/browser-core"]
+      ["@keitoaino/datadog-browser-logs", "@keitoaino/datadog-browser-rum", "@keitoaino/datadog-browser-core"]
     ],
     "no-null-keyword": true,
     "no-submodule-imports": [true],

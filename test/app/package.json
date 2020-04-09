@@ -7,13 +7,14 @@
     "compat:ssr": "webpack --mode=development && node dist/app.js"
   },
   "dependencies": {
-    "@datadog/browser-logs": "file:../../packages/logs",
-    "@datadog/browser-rum": "file:../../packages/rum"
+    "@keitoaino/datadog-browser-logs": "file:../../packages/logs",
+    "@keitoaino/datadog-browser-rum": "file:../../packages/rum"
   },
   "resolutions": {
-    "@datadog/browser-core": "file:../../packages/core",
+    "@keitoaino/datadog-browser-core": "file:../../packages/core",
     "acorn": "6.4.1",
-    "minimist": "1.2.2"
+    "kind-of": "6.0.3",
+    "minimist": "1.2.3"
   },
   "devDependencies": {
     "ts-loader": "6.2.1",

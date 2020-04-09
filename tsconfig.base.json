@@ -13,7 +13,7 @@
       }
     ],
     "paths": {
-      "@datadog/browser-core": ["./packages/core/src"]
+      "@keitoaino/datadog-browser-core": ["./packages/core/src"]
     }
   }
 }

@@ -12,9 +12,9 @@
     ],
     "types": ["node", "@wdio/sync", "jasmine"],
     "paths": {
-      "@datadog/browser-logs": ["../../../packages/logs/src"],
-      "@datadog/browser-rum": ["../../../packages/rum/src"],
-      "@datadog/browser-core": ["../../../packages/core/src"]
+      "@keitoaino/datadog-browser-logs": ["../../../packages/logs/src"],
+      "@keitoaino/datadog-browser-rum": ["../../../packages/rum/src"],
+      "@keitoaino/datadog-browser-core": ["../../../packages/core/src"]
     }
   },
   "include": ["./**/*.ts"]
