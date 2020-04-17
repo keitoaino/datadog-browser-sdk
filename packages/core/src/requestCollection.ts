@@ -24,7 +24,7 @@ export interface RequestCompleteEvent {
   responseType?: string
   startTime: number
   duration: number
-  traceId?: number
+  traceId?: string | number
 }
 
 interface BrowserWindow extends Window {
@@ -181,8 +181,8 @@ export function isServerError(request: RequestCompleteEvent) {
   return request.status >= 500
 }
 
-function getTraceIdFromResponse(response: BrowserXHR): number | undefined {
-  return Number(response.getResponseHeader('trace-id')) || getTraceId();
+function getTraceIdFromResponse(response: BrowserXHR): string | number | undefined {
+  return response.getResponseHeader('trace-id') || getTraceId();
 }
 
 /**

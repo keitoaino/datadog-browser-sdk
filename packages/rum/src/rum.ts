@@ -29,9 +29,9 @@ import {
   computeSize,
   isValidResource,
 } from './resourceUtils'
-import { RumGlobal } from './rum.entry'
+import { InternalContext, RumGlobal } from './rum.entry'
 import { RumSession } from './rumSession'
-import { getUserActionReference, UserActionReference } from './userActionCollection'
+import { getUserActionReference, UserActionMeasures, UserActionReference, UserActionType } from './userActionCollection'
 import { trackView, viewContext, ViewMeasures } from './viewTracker'
 
 export interface PerformancePaintTiming extends PerformanceEntry {
@@ -42,28 +42,6 @@ export interface PerformancePaintTiming extends PerformanceEntry {
 }
 
 export type PerformanceLongTaskTiming = PerformanceEntry
-
-export enum UserActionType {
-  CLICK = 'click',
-  LOAD_VIEW = 'load_view',
-  CUSTOM = 'custom',
-}
-
-interface CustomUserAction {
-  type: UserActionType.CUSTOM
-  name: string
-  context?: Context
-}
-
-interface AutoUserAction {
-  type: UserActionType.LOAD_VIEW | UserActionType.CLICK
-  id: string
-  name: string
-  startTime: number
-  duration: number
-}
-
-export type UserAction = CustomUserAction | AutoUserAction
 
 export enum RumEventCategory {
   USER_ACTION = 'user_action',
@@ -105,7 +83,7 @@ export interface RumResourceEvent {
   resource: {
     kind: ResourceKind
   }
-  traceId?: number
+  traceId?: string | number
   userAction?: UserActionReference
 }
 
@@ -144,6 +122,8 @@ export interface RumLongTaskEvent {
 }
 
 export interface RumUserActionEvent {
+  date?: number
+  duration?: number
   evt: {
     category: RumEventCategory.USER_ACTION
     name: string
@@ -151,8 +131,8 @@ export interface RumUserActionEvent {
   userAction: {
     id?: string
     type: UserActionType
+    measures?: UserActionMeasures
   }
-  [key: string]: ContextValue
 }
 
 export type RumEvent = RumErrorEvent | RumResourceEvent | RumViewEvent | RumLongTaskEvent | RumUserActionEvent
@@ -209,7 +189,7 @@ export function startRum(
   trackErrors(lifeCycle, batch.addRumEvent)
   trackRequests(configuration, lifeCycle, session, batch.addRumEvent)
   trackPerformanceTiming(configuration, lifeCycle, batch.addRumEvent)
-  trackCustomUserAction(lifeCycle, batch.addUserEvent)
+  trackCustomUserAction(lifeCycle, batch.addRumEvent)
   trackAutoUserAction(lifeCycle, batch.addRumEvent)
 
   return {
@@ -219,15 +199,18 @@ export function startRum(
     addUserAction: monitor((name: string, context?: Context) => {
       lifeCycle.notify(LifeCycleEventType.USER_ACTION_COLLECTED, { context, name, type: UserActionType.CUSTOM })
     }),
-    getInternalContext: monitor(() => {
-      return {
-        application_id: applicationId,
-        session_id: viewContext.sessionId,
-        view: {
-          id: viewContext.id,
-        },
+    getInternalContext: monitor(
+      (): InternalContext => {
+        return {
+          application_id: applicationId,
+          session_id: viewContext.sessionId,
+          user_action: getUserActionReference(),
+          view: {
+            id: viewContext.id,
+          },
+        }
       }
-    }),
+    ),
     setRumGlobalContext: monitor((context: Context) => {
       globalContext = context
     }),
@@ -249,20 +232,15 @@ function startRumBatch(
     () => lodashMerge(withSnakeCaseKeys(rumContextProvider()), globalContextProvider())
   )
   return {
-    addRumEvent: (event: RumEvent) => {
+    addRumEvent: (event: RumEvent, context?: Context) => {
       if (session.isTracked()) {
-        batch.add(withSnakeCaseKeys(event as Context))
-      }
-    },
-    addUserEvent: (event: RumUserActionEvent) => {
-      if (session.isTracked()) {
-        batch.add(event as Context)
+        batch.add({ ...context, ...withSnakeCaseKeys((event as unknown) as Context) })
       }
     },
     beforeFlushOnUnload: (handler: () => void) => batch.beforeFlushOnUnload(handler),
     upsertRumEvent: (event: RumEvent, key: string) => {
       if (session.isTracked()) {
-        batch.upsert(withSnakeCaseKeys(event as Context), key)
+        batch.upsert(withSnakeCaseKeys((event as unknown) as Context), key)
       }
     },
   }
@@ -282,19 +260,24 @@ function trackErrors(lifeCycle: LifeCycle, addRumEvent: (event: RumErrorEvent) =
   })
 }
 
-function trackCustomUserAction(lifeCycle: LifeCycle, addUserEvent: (event: RumUserActionEvent) => void) {
+function trackCustomUserAction(
+  lifeCycle: LifeCycle,
+  addRumEvent: (event: RumUserActionEvent, context?: Context) => void
+) {
   lifeCycle.subscribe(LifeCycleEventType.USER_ACTION_COLLECTED, (userAction) => {
     if (userAction.type === UserActionType.CUSTOM) {
-      addUserEvent({
-        ...userAction.context,
-        evt: {
-          category: RumEventCategory.USER_ACTION,
-          name: userAction.name,
+      addRumEvent(
+        {
+          evt: {
+            category: RumEventCategory.USER_ACTION,
+            name: userAction.name,
+          },
+          userAction: {
+            type: userAction.type,
+          },
         },
-        userAction: {
-          type: userAction.type,
-        },
-      })
+        userAction.context
+      )
     }
   })
 }
@@ -311,6 +294,7 @@ function trackAutoUserAction(lifeCycle: LifeCycle, addRumEvent: (event: RumUserA
         },
         userAction: {
           id: userAction.id,
+          measures: userAction.measures,
           type: userAction.type,
         },
       })

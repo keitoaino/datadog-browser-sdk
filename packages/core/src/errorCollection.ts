@@ -17,7 +17,7 @@ export interface ErrorMessage {
   context: {
     error: ErrorContext
     http?: HttpContext
-    trace_id?: number
+    trace_id?: string | number
   }
 }
 

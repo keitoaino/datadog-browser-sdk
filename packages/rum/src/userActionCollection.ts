@@ -1,7 +1,7 @@
-import { DOM_EVENT, generateUUID, monitor, Observable } from '@keitoaino/datadog-browser-core'
+import { Context, DOM_EVENT, generateUUID, monitor, Observable } from '@keitoaino/datadog-browser-core'
 import { getElementContent } from './getElementContent'
 import { LifeCycle, LifeCycleEventType, Subscription } from './lifeCycle'
-import { UserActionType } from './rum'
+import { trackEventCounts } from './trackEventCounts'
 
 // Automatic user action collection lifecycle overview:
 //
@@ -30,11 +30,40 @@ import { UserActionType } from './rum'
 // after MAX_DURATION, it has been validated.
 
 // Delay to wait for a page activity to validate the user action
-const USER_ACTION_VALIDATION_DELAY = 100
+export const USER_ACTION_VALIDATION_DELAY = 100
 // Delay to wait after a page activity to end the user action
-const USER_ACTION_END_DELAY = 100
+export const USER_ACTION_END_DELAY = 100
 // Maximum duration of a user action
 export const USER_ACTION_MAX_DURATION = 10_000
+
+export enum UserActionType {
+  CLICK = 'click',
+  LOAD_VIEW = 'load_view',
+  CUSTOM = 'custom',
+}
+
+export interface UserActionMeasures {
+  errorCount: number
+  longTaskCount: number
+  resourceCount: number
+}
+
+interface CustomUserAction {
+  type: UserActionType.CUSTOM
+  name: string
+  context?: Context
+}
+
+export interface AutoUserAction {
+  type: UserActionType.LOAD_VIEW | UserActionType.CLICK
+  id: string
+  name: string
+  startTime: number
+  duration: number
+  measures: UserActionMeasures
+}
+
+export type UserAction = CustomUserAction | AutoUserAction
 
 export function startUserActionCollection(lifeCycle: LifeCycle) {
   function processClick(event: Event) {
@@ -42,22 +71,7 @@ export function startUserActionCollection(lifeCycle: LifeCycle) {
       return
     }
 
-    const content = getElementContent(event.target)
-
-    const { observable: pageActivitiesObservable, stop: stopPageActivitiesTracking } = trackPageActivities(lifeCycle)
-
-    newUserAction(pageActivitiesObservable, (userActionCompleteEvent) => {
-      stopPageActivitiesTracking()
-      if (userActionCompleteEvent) {
-        lifeCycle.notify(LifeCycleEventType.USER_ACTION_COLLECTED, {
-          duration: userActionCompleteEvent.duration,
-          id: userActionCompleteEvent.id,
-          name: content,
-          startTime: userActionCompleteEvent.startTime,
-          type: UserActionType.CLICK,
-        })
-      }
-    })
+    newUserAction(lifeCycle, UserActionType.CLICK, getElementContent(event.target))
   }
 
   addEventListener(DOM_EVENT.CLICK, processClick, { capture: true })
@@ -71,69 +85,48 @@ export function startUserActionCollection(lifeCycle: LifeCycle) {
 
 let currentUserAction: { id: string; startTime: number } | undefined
 
-export interface UserActionReference {
-  id: string
-}
-export function getUserActionReference(time: number): UserActionReference | undefined {
-  if (currentUserAction && time >= currentUserAction.startTime) {
-    return { id: currentUserAction.id }
-  }
-  return undefined
-}
-
-interface UserActionCompleteEvent {
-  id: string
-  startTime: number
-  duration: number
-}
-
-function newUserAction(
-  pageActivitiesObservable: Observable<PageActivityEvent>,
-  finishCallback: (userActionCompleteEvent: UserActionCompleteEvent | undefined) => void
-) {
+function newUserAction(lifeCycle: LifeCycle, type: UserActionType, name: string) {
   if (currentUserAction) {
     // Discard any new user action if another one is already occuring.
-    finishCallback(undefined)
     return
   }
 
-  let idleTimeoutId: ReturnType<typeof setTimeout>
   const id = generateUUID()
   const startTime = performance.now()
-  let hasFinished = false
-
-  const validationTimeoutId = setTimeout(monitor(() => finish(undefined)), USER_ACTION_VALIDATION_DELAY)
-  const maxDurationTimeoutId = setTimeout(
-    monitor(() => finish(completeUserAction(performance.now()))),
-    USER_ACTION_MAX_DURATION
-  )
-
   currentUserAction = { id, startTime }
 
-  pageActivitiesObservable.subscribe(({ isBusy }) => {
-    clearTimeout(validationTimeoutId)
-    clearTimeout(idleTimeoutId)
-    const lastChangeTime = performance.now()
-    if (!isBusy) {
-      idleTimeoutId = setTimeout(monitor(() => finish(completeUserAction(lastChangeTime))), USER_ACTION_END_DELAY)
+  const { observable: pageActivitiesObservable, stop: stopPageActivitiesTracking } = trackPageActivities(lifeCycle)
+  const { eventCounts, stop: stopEventCountsTracking } = trackEventCounts(lifeCycle)
+
+  waitUserActionCompletion(pageActivitiesObservable, (endTime) => {
+    stopPageActivitiesTracking()
+    stopEventCountsTracking()
+    if (endTime !== undefined) {
+      lifeCycle.notify(LifeCycleEventType.USER_ACTION_COLLECTED, {
+        id,
+        name,
+        startTime,
+        type,
+        duration: endTime - startTime,
+        measures: {
+          errorCount: eventCounts.errorCount,
+          longTaskCount: eventCounts.longTaskCount,
+          resourceCount: eventCounts.resourceCount,
+        },
+      })
     }
   })
+}
 
-  function completeUserAction(endTime: number): UserActionCompleteEvent {
-    return { id, startTime, duration: endTime - startTime }
+export interface UserActionReference {
+  id: string
+}
+export function getUserActionReference(time?: number): UserActionReference | undefined {
+  if (!currentUserAction || (time !== undefined && time < currentUserAction.startTime)) {
+    return undefined
   }
 
-  function finish(userActionCompleteEvent: UserActionCompleteEvent | undefined) {
-    if (hasFinished) {
-      return
-    }
-    hasFinished = true
-    clearTimeout(validationTimeoutId)
-    clearTimeout(idleTimeoutId)
-    clearTimeout(maxDurationTimeoutId)
-    currentUserAction = undefined
-    finishCallback(userActionCompleteEvent)
-  }
+  return { id: currentUserAction.id }
 }
 
 export interface PageActivityEvent {
@@ -192,10 +185,43 @@ function trackPageActivities(lifeCycle: LifeCycle): { observable: Observable<Pag
   }
 }
 
+function waitUserActionCompletion(
+  pageActivitiesObservable: Observable<PageActivityEvent>,
+  completionCallback: (endTime: number | undefined) => void
+) {
+  let idleTimeoutId: ReturnType<typeof setTimeout>
+  let hasCompleted = false
+
+  const validationTimeoutId = setTimeout(monitor(() => complete(undefined)), USER_ACTION_VALIDATION_DELAY)
+  const maxDurationTimeoutId = setTimeout(monitor(() => complete(performance.now())), USER_ACTION_MAX_DURATION)
+
+  pageActivitiesObservable.subscribe(({ isBusy }) => {
+    clearTimeout(validationTimeoutId)
+    clearTimeout(idleTimeoutId)
+    const lastChangeTime = performance.now()
+    if (!isBusy) {
+      idleTimeoutId = setTimeout(monitor(() => complete(lastChangeTime)), USER_ACTION_END_DELAY)
+    }
+  })
+
+  function complete(endTime: number | undefined) {
+    if (hasCompleted) {
+      return
+    }
+    hasCompleted = true
+    clearTimeout(validationTimeoutId)
+    clearTimeout(idleTimeoutId)
+    clearTimeout(maxDurationTimeoutId)
+    currentUserAction = undefined
+    completionCallback(endTime)
+  }
+}
+
 export const $$tests = {
   newUserAction,
   trackPageActivities,
   resetUserAction() {
     currentUserAction = undefined
   },
+  waitUserActionCompletion,
 }
