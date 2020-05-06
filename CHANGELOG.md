@@ -1,5 +1,27 @@
 # Changelog
 
+## v1.11.4
+
+- ♻️[RUMF-471] rename version ([#382](https://github.com/DataDog/browser-sdk/pull/382))
+
+## v1.11.3
+
+- [RUMF-447]: Only collect first-contentful-paint if page is visible ([#361](https://github.com/DataDog/browser-sdk/pull/361))
+
+## v1.11.2
+
+- 🐛[RUMF-451] compute session type for each event ([#375](https://github.com/DataDog/browser-sdk/pull/375))
+- 🐛 [RUM] fix angular compatibility ([#376](https://github.com/DataDog/browser-sdk/pull/376))
+
+## v1.11.1
+
+- 🐛 [RUM] fix view update after its end ([#373](https://github.com/DataDog/browser-sdk/pull/373))
+
+## v1.11.0
+
+- Change view logic to emit LifeCycle events ([#366](https://github.com/DataDog/browser-sdk/pull/366))
+- [RUMF-441] Track event counts for user actions ([#358](https://github.com/DataDog/browser-sdk/pull/358))
+
 ## v1.10.0
 
 - ✨[RUMF-430] enable new session strategy ([#360](https://github.com/DataDog/browser-sdk/pull/360))

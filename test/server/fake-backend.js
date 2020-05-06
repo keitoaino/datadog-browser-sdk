@@ -1,30 +1,27 @@
-module.exports = (app) => {
-  let logs = []
-  let rumEvents = []
-  let monitoring = []
+const url = require('url')
+const { clean } = require('./spec-contexts')
 
+module.exports = (app) => {
   app.post('/logs', (req, res) => {
-    req.body.split('\n').forEach((log) => logs.push(JSON.parse(log)))
+    req.body.split('\n').forEach((log) => req.specContext.logs.push(JSON.parse(log)))
     res.send('ok')
   })
-  app.get('/logs', (req, res) => send(res, logs))
+  app.get('/logs', (req, res) => send(res, req.specContext.logs))
 
   app.post('/rum', (req, res) => {
-    req.body.split('\n').forEach((rumEvent) => rumEvents.push(JSON.parse(rumEvent)))
+    req.body.split('\n').forEach((rumEvent) => req.specContext.rum.push(JSON.parse(rumEvent)))
     res.send('ok')
   })
-  app.get('/rum', (req, res) => send(res, rumEvents))
+  app.get('/rum', (req, res) => send(res, req.specContext.rum))
 
   app.post('/monitoring', (req, res) => {
-    monitoring.push(JSON.parse(req.body))
+    req.specContext.monitoring.push(JSON.parse(req.body))
     res.send('ok')
   })
-  app.get('/monitoring', (req, res) => send(res, monitoring))
+  app.get('/monitoring', (req, res) => send(res, req.specContext.monitoring))
 
   app.get('/reset', (req, res) => {
-    logs = []
-    rumEvents = []
-    monitoring = []
+    clean(req.specContext)
     res.send('ok')
   })
 
@@ -36,16 +33,26 @@ module.exports = (app) => {
     if (req.query['timing-allow-origin'] === 'true') {
       res.set('Timing-Allow-Origin', '*')
     }
-    setTimeout(() => res.send('ok'), 10)
+    let timeoutDuration = 0
+    if (req.query['duration']) {
+      timeoutDuration = Number(req.query['duration'])
+    }
+    setTimeout(() => res.send('ok'), timeoutDuration)
   })
 
   app.get('/redirect', (req, res) => {
-    res.redirect('ok')
+    const redirectUri = url.parse(req.originalUrl)
+    res.redirect(`ok${redirectUri.search}`)
+  })
+
+  app.post('/server-log', (req, res) => {
+    res.send('ok')
   })
 }
 
 function send(res, data) {
   // add response content to res object for logging
-  res.body = JSON.stringify(data)
-  res.send(data)
+  const content = data || []
+  res.body = JSON.stringify(content)
+  res.send(content)
 }

@@ -1,14 +1,13 @@
 variables:
   APP: 'browser-sdk'
-  CURRENT_CI_IMAGE: 16
+  CURRENT_CI_IMAGE: 17
   BUILD_STABLE_REGISTRY: '486234852809.dkr.ecr.us-east-1.amazonaws.com'
   CI_IMAGE: '$BUILD_STABLE_REGISTRY/ci/$APP:$CURRENT_CI_IMAGE'
 
 stages:
   - ci-image
   - test
-  - unit-bs
-  - e2e-bs
+  - browserstack
   - pre-deploy-notify
   - deploy
   - notify
@@ -121,7 +120,7 @@ unit-bs:
     refs:
       - master
       - tags
-  stage: unit-bs
+  stage: browserstack
   tags: ['runner:main', 'size:large']
   image: $CI_IMAGE
   script:
@@ -133,7 +132,7 @@ e2e-bs:
     refs:
       - master
       - tags
-  stage: e2e-bs
+  stage: browserstack
   tags: ['runner:main', 'size:large']
   image: $CI_IMAGE
   artifacts:
@@ -153,9 +152,9 @@ deploy-staging:
   image: $CI_IMAGE
   script:
     - yarn
-    - TARGET_DATACENTER=eu TARGET_ENV=staging VERSION=staging yarn build:bundle
+    - TARGET_DATACENTER=eu TARGET_ENV=staging BUILD_MODE=staging yarn build:bundle
     - ./scripts/deploy.sh staging eu
-    - TARGET_DATACENTER=us TARGET_ENV=staging VERSION=staging yarn build:bundle
+    - TARGET_DATACENTER=us TARGET_ENV=staging BUILD_MODE=staging yarn build:bundle
     - ./scripts/deploy.sh staging us
 
 deploy-release:
@@ -169,9 +168,9 @@ deploy-release:
   image: $CI_IMAGE
   script:
     - yarn
-    - TARGET_DATACENTER=us TARGET_ENV=production VERSION=release yarn build:bundle
+    - TARGET_DATACENTER=us TARGET_ENV=production BUILD_MODE=release yarn build:bundle
     - ./scripts/deploy.sh prod us
-    - TARGET_DATACENTER=eu TARGET_ENV=production VERSION=release yarn build:bundle
+    - TARGET_DATACENTER=eu TARGET_ENV=production BUILD_MODE=release yarn build:bundle
     - ./scripts/deploy.sh prod eu
 
 ########################################################################################################################
@@ -197,6 +196,7 @@ notify-master-success:
     - COMMIT_URL="$CI_PROJECT_URL/commits/$CI_COMMIT_SHA"
     - 'MESSAGE_TEXT=":rocket: $CI_PROJECT_NAME <$COMMIT_URL|$COMMIT_MESSAGE> deployed to :datadog_staging:."'
     - postmessage "#rum-deploy" "$MESSAGE_TEXT"
+    - postmessage "#rum-ops-stg" "$MESSAGE_TEXT"
 
 notify-master-failure:
   extends: .slack-notifier-base
@@ -232,6 +232,7 @@ notify-release-success:
     - COMMIT_URL="$CI_PROJECT_URL/commits/$CI_COMMIT_SHA"
     - 'MESSAGE_TEXT=":rocket: $CI_PROJECT_NAME <$COMMIT_URL|$COMMIT_MESSAGE> deployed to :datadog:."'
     - postmessage "#rum-deploy" "$MESSAGE_TEXT"
+    - postmessage "#rum-ops" "$MESSAGE_TEXT"
 
 notify-release-failure:
   extends: .slack-notifier-base
