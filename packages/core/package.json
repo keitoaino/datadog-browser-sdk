@@ -1,6 +1,6 @@
 {
   "name": "@keitoaino/datadog-browser-core",
-  "version": "1.11.4",
+  "version": "1.12.1",
   "license": "Apache-2.0",
   "main": "cjs/index.js",
   "module": "esm/index.js",
@@ -14,13 +14,9 @@
     "build:esm": "rm -rf esm && tsc -p tsconfig.esm.json"
   },
   "dependencies": {
-    "lodash.assign": "4.2.0",
-    "lodash.merge": "4.6.2",
     "tslib": "1.10.0"
   },
   "devDependencies": {
-    "@types/lodash.assign": "4.2.6",
-    "@types/lodash.merge": "4.6.6",
     "@types/sinon": "7.0.13",
     "sinon": "7.3.2"
   },

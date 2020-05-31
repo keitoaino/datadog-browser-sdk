@@ -36,6 +36,7 @@ export const DEFAULT_CONFIGURATION = {
 export interface UserConfiguration {
   publicApiKey?: string // deprecated
   clientToken: string
+  applicationId?: string
   internalMonitoringApiKey?: string
   isCollectingError?: boolean
   sampleRate?: number
@@ -44,6 +45,10 @@ export interface UserConfiguration {
   enableExperimentalFeatures?: string[]
   silentMultipleInit?: boolean
   proxyHost?: string
+
+  service?: string
+  env?: string
+  version?: string
 
   // Below is only taken into account for e2e-test build mode.
   internalMonitoringEndpoint?: string
@@ -63,20 +68,29 @@ export type Configuration = typeof DEFAULT_CONFIGURATION & {
 interface TransportConfiguration {
   clientToken: string
   datacenter: Datacenter
-  env: Environment
+  sdkEnv: Environment
   buildMode: BuildMode
   sdkVersion: string
+  applicationId?: string
   proxyHost?: string
+
+  service?: string
+  env?: string
+  version?: string
 }
 
 export function buildConfiguration(userConfiguration: UserConfiguration, buildEnv: BuildEnv): Configuration {
   const transportConfiguration: TransportConfiguration = {
+    applicationId: userConfiguration.applicationId,
     buildMode: buildEnv.buildMode,
     clientToken: userConfiguration.clientToken,
     datacenter: userConfiguration.datacenter || buildEnv.datacenter,
-    env: buildEnv.env,
+    env: userConfiguration.env,
     proxyHost: userConfiguration.proxyHost,
+    sdkEnv: buildEnv.sdkEnv,
     sdkVersion: buildEnv.sdkVersion,
+    service: userConfiguration.service,
+    version: userConfiguration.version,
   }
 
   const enableExperimentalFeatures = Array.isArray(userConfiguration.enableExperimentalFeatures)
@@ -129,11 +143,17 @@ export function buildConfiguration(userConfiguration: UserConfiguration, buildEn
 
 function getEndpoint(type: string, conf: TransportConfiguration, source?: string) {
   const tld = conf.datacenter === 'us' ? 'com' : 'eu'
-  const domain = conf.env === 'production' ? `datadoghq.${tld}` : `datad0g.${tld}`
-  const tags = `sdk_version:${conf.sdkVersion}`
+  const domain = conf.sdkEnv === 'production' ? `datadoghq.${tld}` : `datad0g.${tld}`
+  const tags =
+    `sdk_version:${conf.sdkVersion}` +
+    `${conf.env ? `,env:${conf.env}` : ''}` +
+    `${conf.service ? `,service:${conf.service}` : ''}` +
+    `${conf.version ? `,version:${conf.version}` : ''}`
   const datadogHost = `${type}-http-intake.logs.${domain}`
   const host = conf.proxyHost ? conf.proxyHost : datadogHost
   const proxyParameter = conf.proxyHost ? `ddhost=${datadogHost}&` : ''
+  const applicationIdParameter = conf.applicationId ? `_dd.application_id=${conf.applicationId}&` : ''
+  const parameters = `${applicationIdParameter}${proxyParameter}ddsource=${source || 'browser'}&ddtags=${tags}`
 
-  return `https://${host}/v1/input/${conf.clientToken}?${proxyParameter}ddsource=${source || 'browser'}&ddtags=${tags}`
+  return `https://${host}/v1/input/${conf.clientToken}?${parameters}`
 }

@@ -3,6 +3,7 @@ import {
   Configuration,
   Context,
   ContextValue,
+  deepMerge,
   ErrorContext,
   ErrorMessage,
   getTimestamp,
@@ -18,7 +19,6 @@ import {
   ResourceKind,
   withSnakeCaseKeys,
 } from '@keitoaino/datadog-browser-core'
-import lodashMerge from 'lodash.merge'
 
 import { LifeCycle, LifeCycleEventType } from './lifeCycle'
 import { matchRequestTiming } from './matchRequestTiming'
@@ -32,7 +32,7 @@ import {
 import { InternalContext, RumGlobal } from './rum.entry'
 import { RumSession } from './rumSession'
 import { getUserActionReference, UserActionMeasures, UserActionReference, UserActionType } from './userActionCollection'
-import { viewContext, ViewMeasures } from './viewCollection'
+import { viewContext, ViewLoadingType, ViewMeasures } from './viewCollection'
 
 export interface PerformancePaintTiming extends PerformanceEntry {
   entryType: 'paint'
@@ -108,6 +108,8 @@ export interface RumViewEvent {
     documentVersion: number
   }
   view: {
+    loadingTime?: number
+    loadingType: ViewLoadingType
     measures: ViewMeasures
   }
 }
@@ -151,17 +153,18 @@ export function startRum(
 ): Omit<RumGlobal, 'init'> {
   let globalContext: Context = {}
 
-  internalMonitoring.setExternalContextProvider(() =>
-    lodashMerge(
-      {
-        application_id: applicationId,
-        session_id: viewContext.sessionId,
-        view: {
-          id: viewContext.id,
+  internalMonitoring.setExternalContextProvider(
+    () =>
+      deepMerge(
+        {
+          application_id: applicationId,
+          session_id: viewContext.sessionId,
+          view: {
+            id: viewContext.id,
+          },
         },
-      },
-      globalContext
-    )
+        globalContext
+      ) as Context
   )
 
   const batch = startRumBatch(
@@ -231,7 +234,7 @@ function startRumBatch(
     configuration.batchBytesLimit,
     configuration.maxMessageSize,
     configuration.flushTimeout,
-    () => lodashMerge(withSnakeCaseKeys(rumContextProvider()), globalContextProvider()),
+    () => deepMerge(withSnakeCaseKeys(rumContextProvider()), globalContextProvider()) as Context,
     beforeUnloadCallback
   )
   return {
@@ -261,6 +264,8 @@ function trackView(lifeCycle: LifeCycle, upsertRumEvent: (event: RumViewEvent, k
           documentVersion: view.documentVersion,
         },
         view: {
+          loadingTime: view.loadingTime ? msToNs(view.loadingTime) : undefined,
+          loadingType: view.loadingType,
           measures: view.measures,
         },
       },
