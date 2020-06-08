@@ -1,13 +1,11 @@
 {
   "name": "@keitoaino/datadog-browser-core",
-  "version": "1.12.1",
+  "version": "1.12.2",
   "license": "Apache-2.0",
   "main": "cjs/index.js",
   "module": "esm/index.js",
   "types": "cjs/index.d.ts",
-  "publishConfig": {
-    "access": "public"
-  },
+  "sideEffects": false,
   "scripts": {
     "build": "run-p build:cjs build:esm",
     "build:cjs": "rm -rf cjs && tsc -p tsconfig.cjs.json",
