@@ -27,6 +27,7 @@ const internalMonitoringStub: InternalMonitoring = {
 const configuration = {
   ...DEFAULT_CONFIGURATION,
   ...SPEC_ENDPOINTS,
+  isEnabled: () => true,
   maxBatchSize: 1,
 }
 

@@ -66,7 +66,7 @@ export function startViewCollection(location: Location, lifeCycle: LifeCycle, se
   })
 
   // Session keep alive
-  const keepAliveInterval = setInterval(
+  const keepAliveInterval = window.setInterval(
     monitor(() => {
       currentView.triggerUpdate()
     }),
