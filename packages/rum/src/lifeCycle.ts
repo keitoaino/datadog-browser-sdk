@@ -1,12 +1,17 @@
-import { ErrorMessage, RequestCompleteEvent, RequestStartEvent } from '@keitoaino/datadog-browser-core'
-import { UserAction } from './userActionCollection'
+import { ErrorMessage } from '@keitoaino/datadog-browser-core'
+import { RequestCompleteEvent, RequestStartEvent } from './requestCollection'
+import { AutoUserAction, CustomUserAction } from './userActionCollection'
 import { View } from './viewCollection'
 
 export enum LifeCycleEventType {
   ERROR_COLLECTED,
   PERFORMANCE_ENTRY_COLLECTED,
-  USER_ACTION_COLLECTED,
-  VIEW_COLLECTED,
+  CUSTOM_ACTION_COLLECTED,
+  AUTO_ACTION_CREATED,
+  AUTO_ACTION_COMPLETED,
+  AUTO_ACTION_DISCARDED,
+  VIEW_CREATED,
+  VIEW_UPDATED,
   REQUEST_STARTED,
   REQUEST_COMPLETED,
   SESSION_RENEWED,
@@ -26,14 +31,18 @@ export class LifeCycle {
   notify(eventType: LifeCycleEventType.PERFORMANCE_ENTRY_COLLECTED, data: PerformanceEntry): void
   notify(eventType: LifeCycleEventType.REQUEST_STARTED, data: RequestStartEvent): void
   notify(eventType: LifeCycleEventType.REQUEST_COMPLETED, data: RequestCompleteEvent): void
-  notify(eventType: LifeCycleEventType.USER_ACTION_COLLECTED, data: UserAction): void
-  notify(eventType: LifeCycleEventType.VIEW_COLLECTED, data: View): void
+  notify(eventType: LifeCycleEventType.AUTO_ACTION_COMPLETED, data: AutoUserAction): void
+  notify(eventType: LifeCycleEventType.CUSTOM_ACTION_COLLECTED, data: CustomUserAction): void
+  notify(eventType: LifeCycleEventType.AUTO_ACTION_CREATED, data: { id: string; startTime: number }): void
+  notify(eventType: LifeCycleEventType.VIEW_CREATED, data: { id: string; startTime: number; location: Location }): void
+  notify(eventType: LifeCycleEventType.VIEW_UPDATED, data: View): void
   notify(
     eventType:
       | LifeCycleEventType.SESSION_RENEWED
       | LifeCycleEventType.RESOURCE_ADDED_TO_BATCH
       | LifeCycleEventType.DOM_MUTATED
       | LifeCycleEventType.BEFORE_UNLOAD
+      | LifeCycleEventType.AUTO_ACTION_DISCARDED
   ): void
   notify(eventType: LifeCycleEventType, data?: any) {
     const eventCallbacks = this.callbacks[eventType]
@@ -52,14 +61,27 @@ export class LifeCycle {
     eventType: LifeCycleEventType.REQUEST_COMPLETED,
     callback: (data: RequestCompleteEvent) => void
   ): Subscription
-  subscribe(eventType: LifeCycleEventType.USER_ACTION_COLLECTED, callback: (data: UserAction) => void): Subscription
-  subscribe(eventType: LifeCycleEventType.VIEW_COLLECTED, callback: (data: View) => void): Subscription
+  subscribe(eventType: LifeCycleEventType.AUTO_ACTION_COMPLETED, callback: (data: AutoUserAction) => void): Subscription
+  subscribe(
+    eventType: LifeCycleEventType.AUTO_ACTION_CREATED,
+    callback: (data: { id: string; startTime: number }) => void
+  ): Subscription
+  subscribe(
+    eventType: LifeCycleEventType.CUSTOM_ACTION_COLLECTED,
+    callback: (data: CustomUserAction) => void
+  ): Subscription
+  subscribe(
+    eventType: LifeCycleEventType.VIEW_CREATED,
+    callback: (data: { id: string; startTime: number; location: Location }) => void
+  ): Subscription
+  subscribe(eventType: LifeCycleEventType.VIEW_UPDATED, callback: (data: View) => void): Subscription
   subscribe(
     eventType:
       | LifeCycleEventType.SESSION_RENEWED
       | LifeCycleEventType.RESOURCE_ADDED_TO_BATCH
       | LifeCycleEventType.DOM_MUTATED
-      | LifeCycleEventType.BEFORE_UNLOAD,
+      | LifeCycleEventType.BEFORE_UNLOAD
+      | LifeCycleEventType.AUTO_ACTION_DISCARDED,
     callback: () => void
   ): Subscription
   subscribe(eventType: LifeCycleEventType, callback: (data?: any) => void) {

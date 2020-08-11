@@ -1,17 +1,9 @@
 import { DOM_EVENT, ErrorMessage } from '@keitoaino/datadog-browser-core'
 import { LifeCycle, LifeCycleEventType } from '../src/lifeCycle'
 import { PAGE_ACTIVITY_MAX_DURATION, PAGE_ACTIVITY_VALIDATION_DELAY } from '../src/trackPageActivities'
-import {
-  $$tests,
-  AutoUserAction,
-  getUserActionReference,
-  UserAction,
-  UserActionType,
-} from '../src/userActionCollection'
+import { AutoUserAction, UserActionType } from '../src/userActionCollection'
 import { View } from '../src/viewCollection'
 import { setup, TestSetupBuilder } from './specHelper'
-
-const { resetUserAction, newUserAction } = $$tests
 
 // Used to wait some time after the creation of a user action
 const BEFORE_PAGE_ACTIVITY_VALIDATION_DELAY = PAGE_ACTIVITY_VALIDATION_DELAY * 0.8
@@ -38,6 +30,8 @@ describe('startUserActionCollection', () => {
   let button: HTMLButtonElement
   let emptyElement: HTMLHRElement
   let setupBuilder: TestSetupBuilder
+  let createSpy: jasmine.Spy
+  let discardSpy: jasmine.Spy
 
   function mockValidatedClickUserAction(lifeCycle: LifeCycle, clock: jasmine.Clock, target: HTMLElement) {
     target.addEventListener(DOM_EVENT.CLICK, () => {
@@ -59,10 +53,17 @@ describe('startUserActionCollection', () => {
     emptyElement = document.createElement('hr')
     document.body.appendChild(emptyElement)
 
+    createSpy = jasmine.createSpy('create')
+    discardSpy = jasmine.createSpy('discard')
+
     setupBuilder = setup()
       .withFakeClock()
       .withUserActionCollection()
-      .beforeBuild((lifeCycle) => lifeCycle.subscribe(LifeCycleEventType.USER_ACTION_COLLECTED, pushEvent))
+      .beforeBuild((lifeCycle) => {
+        lifeCycle.subscribe(LifeCycleEventType.AUTO_ACTION_CREATED, createSpy)
+        lifeCycle.subscribe(LifeCycleEventType.AUTO_ACTION_COMPLETED, pushEvent)
+        lifeCycle.subscribe(LifeCycleEventType.AUTO_ACTION_DISCARDED, discardSpy)
+      })
   })
 
   afterEach(() => {
@@ -71,20 +72,22 @@ describe('startUserActionCollection', () => {
     setupBuilder.cleanup()
   })
 
-  it('cancels pending user action on view loading', () => {
+  it('discards pending user action on view created', () => {
     const { lifeCycle, clock } = setupBuilder.build()
     mockValidatedClickUserAction(lifeCycle, clock, button)
+    expect(createSpy).toHaveBeenCalled()
 
-    const fakeView = {}
-    lifeCycle.notify(LifeCycleEventType.VIEW_COLLECTED, fakeView as View)
+    lifeCycle.notify(LifeCycleEventType.VIEW_CREATED, { location, id: 'fake', startTime: 0 })
     clock.tick(EXPIRE_DELAY)
 
     expect(events).toEqual([])
+    expect(discardSpy).toHaveBeenCalled()
   })
 
   it('starts a user action when clicking on an element', () => {
     const { lifeCycle, clock } = setupBuilder.build()
     mockValidatedClickUserAction(lifeCycle, clock, button)
+    expect(createSpy).toHaveBeenCalled()
     clock.tick(EXPIRE_DELAY)
     expect(events).toEqual([
       {
@@ -102,99 +105,58 @@ describe('startUserActionCollection', () => {
     ])
   })
 
-  it('cancels a user action when if nothing happens after a click', () => {
+  it('discards a user action when nothing happens after a click', () => {
     const { clock } = setupBuilder.build()
     clock.tick(SOME_ARBITRARY_DELAY)
     button.click()
 
     clock.tick(EXPIRE_DELAY)
     expect(events).toEqual([])
+    expect(discardSpy).toHaveBeenCalled()
   })
 
   it('ignores a user actions if it fails to find a name', () => {
     const { lifeCycle, clock } = setupBuilder.build()
     mockValidatedClickUserAction(lifeCycle, clock, emptyElement)
+    expect(createSpy).not.toHaveBeenCalled()
     clock.tick(EXPIRE_DELAY)
 
     expect(events).toEqual([])
   })
 })
 
-describe('getUserActionReference', () => {
-  let setupBuilder: TestSetupBuilder
-  const { events, pushEvent } = eventsCollector<UserAction>()
-
-  beforeEach(() => {
-    setupBuilder = setup().withFakeClock()
-  })
-
-  afterEach(() => {
-    resetUserAction()
-    setupBuilder.cleanup()
-  })
-
-  it('returns the current user action reference', () => {
-    const { clock } = setupBuilder.build()
-    expect(getUserActionReference()).toBeUndefined()
-    const lifeCycle = new LifeCycle()
-    lifeCycle.subscribe(LifeCycleEventType.USER_ACTION_COLLECTED, pushEvent)
-
-    newUserAction(lifeCycle, UserActionType.CLICK, 'test')
-
-    const userActionReference = getUserActionReference(Date.now())!
-
-    expect(userActionReference).toBeDefined()
-
-    clock.tick(BEFORE_PAGE_ACTIVITY_VALIDATION_DELAY)
-    lifeCycle.notify(LifeCycleEventType.DOM_MUTATED)
-
-    expect(getUserActionReference()).toBeDefined()
-
-    clock.tick(EXPIRE_DELAY)
-
-    expect(getUserActionReference()).toBeUndefined()
-
-    const userAction = events[0] as AutoUserAction
-    expect(userAction.id).toBe(userActionReference.id)
-  })
-
-  it('do not return the user action reference for events occuring before the start of the user action', () => {
-    const { clock } = setupBuilder.build()
-    const timeBeforeStartingUserAction = Date.now()
-
-    clock.tick(SOME_ARBITRARY_DELAY)
-    newUserAction(new LifeCycle(), UserActionType.CLICK, 'test')
-
-    clock.tick(BEFORE_PAGE_ACTIVITY_VALIDATION_DELAY * 0.5)
-    const timeAfterStartingUserAction = Date.now()
-    clock.tick(BEFORE_PAGE_ACTIVITY_VALIDATION_DELAY * 0.5)
-
-    expect(getUserActionReference()).toBeDefined()
-    expect(getUserActionReference(timeAfterStartingUserAction)).toBeDefined()
-    expect(getUserActionReference(timeBeforeStartingUserAction)).toBeUndefined()
-
-    clock.tick(EXPIRE_DELAY)
-  })
-})
-
 describe('newUserAction', () => {
   let setupBuilder: TestSetupBuilder
-  const { events, pushEvent } = eventsCollector<UserAction>()
+  const { events, pushEvent } = eventsCollector<AutoUserAction>()
+
+  function newClick(name: string) {
+    const button = document.createElement('button')
+    button.setAttribute('title', name)
+    document.getElementById('root')!.appendChild(button)
+    button.click()
+  }
 
   beforeEach(() => {
-    setupBuilder = setup().withFakeClock()
+    const root = document.createElement('root')
+    root.setAttribute('id', 'root')
+    document.body.appendChild(root)
+    setupBuilder = setup()
+      .withFakeClock()
+      .withUserActionCollection()
   })
 
   afterEach(() => {
+    const root = document.getElementById('root')!
+    root.parentNode!.removeChild(root)
     setupBuilder.cleanup()
   })
 
-  it('cancels any starting user action while another one is happening', () => {
+  it('ignores any starting user action while another one is happening', () => {
     const { lifeCycle, clock } = setupBuilder.build()
-    lifeCycle.subscribe(LifeCycleEventType.USER_ACTION_COLLECTED, pushEvent)
+    lifeCycle.subscribe(LifeCycleEventType.AUTO_ACTION_COMPLETED, pushEvent)
 
-    newUserAction(lifeCycle, UserActionType.CLICK, 'test-1')
-    newUserAction(lifeCycle, UserActionType.CLICK, 'test-2')
+    newClick('test-1')
+    newClick('test-2')
 
     clock.tick(BEFORE_PAGE_ACTIVITY_VALIDATION_DELAY)
     lifeCycle.notify(LifeCycleEventType.DOM_MUTATED)
@@ -204,12 +166,12 @@ describe('newUserAction', () => {
     expect(events[0].name).toBe('test-1')
   })
 
-  it('counts errors occuring during the user action', () => {
+  it('counts errors occurring during the user action', () => {
     const { lifeCycle, clock } = setupBuilder.build()
     const error = {}
-    lifeCycle.subscribe(LifeCycleEventType.USER_ACTION_COLLECTED, pushEvent)
+    lifeCycle.subscribe(LifeCycleEventType.AUTO_ACTION_COMPLETED, pushEvent)
 
-    newUserAction(lifeCycle, UserActionType.CLICK, 'test-1')
+    newClick('test-1')
 
     lifeCycle.notify(LifeCycleEventType.ERROR_COLLECTED, error as ErrorMessage)
     clock.tick(BEFORE_PAGE_ACTIVITY_VALIDATION_DELAY)

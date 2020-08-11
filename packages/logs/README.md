@@ -9,10 +9,10 @@ Datadog browser logs library.
 ### NPM
 
 ```
-import { datadogLogs } from '@keitoaino/datadog-browser-logs'
+import { Datacenter, datadogLogs } from '@keitoaino/datadog-browser-logs'
 datadogLogs.init({
   clientToken: 'XXX',
-  datacenter: 'us',
+  datacenter: Datacenter.US,
   forwardErrorsToLogs: true,
   sampleRate: 100
 })
@@ -67,6 +67,7 @@ What we call `Context` is a map `{key: value}` that will be added to the message
   logger.setLevel (level?: 'debug' | 'info' | 'warn' | 'error')
   logger.setHandler (handler?: 'http' | 'console' | 'silent')
   logger.addContext (key: string, value: any)  # add one key-value to the logger context
+  logger.removeContext (key: string)  # remove one key from the logger context
   logger.setContext (context: Context)  # entirely replace the logger context
   ```
 

@@ -65,26 +65,7 @@ export function startLogger(
     () => deepMerge({ session_id: session.getId() }, globalContext, getRUMInternalContext() as Context) as Context
   )
 
-  const batch = new Batch<LogsMessage>(
-    new HttpRequest(configuration.logsEndpoint, configuration.batchBytesLimit),
-    configuration.maxBatchSize,
-    configuration.batchBytesLimit,
-    configuration.maxMessageSize,
-    configuration.flushTimeout,
-    () =>
-      deepMerge(
-        {
-          date: new Date().getTime(),
-          session_id: session.getId(),
-          view: {
-            referrer: document.referrer,
-            url: window.location.href,
-          },
-        },
-        globalContext,
-        getRUMInternalContext() as Context
-      ) as Context
-  )
+  const batch = startLoggerBatch(configuration, session, () => globalContext)
   const handlers = {
     [HandlerType.console]: (message: LogsMessage) => console.log(`${message.status}: ${message.message}`),
     [HandlerType.http]: (message: LogsMessage) => batch.add(message),
@@ -93,7 +74,13 @@ export function startLogger(
   const logger = new Logger(session, handlers)
   customLoggers = {}
   errorObservable.subscribe((e: ErrorMessage) =>
-    logger.error(e.message, { date: getTimestamp(e.startTime), ...e.context })
+    logger.error(
+      e.message,
+      deepMerge(
+        ({ date: getTimestamp(e.startTime), ...e.context } as unknown) as Context,
+        getRUMInternalContext(e.startTime)
+      )
+    )
   )
 
   const globalApi: Partial<LogsGlobal> = {}
@@ -107,6 +94,51 @@ export function startLogger(
   globalApi.getLogger = getLogger
   globalApi.logger = logger
   return globalApi
+}
+
+function startLoggerBatch(configuration: Configuration, session: LoggerSession, globalContextProvider: () => Context) {
+  const primaryBatch = createLoggerBatch(configuration.logsEndpoint)
+
+  let replicaBatch: Batch | undefined
+  if (configuration.replica !== undefined) {
+    replicaBatch = createLoggerBatch(configuration.replica.logsEndpoint)
+  }
+
+  function createLoggerBatch(endpointUrl: string) {
+    return new Batch(
+      new HttpRequest(endpointUrl, configuration.batchBytesLimit),
+      configuration.maxBatchSize,
+      configuration.batchBytesLimit,
+      configuration.maxMessageSize,
+      configuration.flushTimeout
+    )
+  }
+
+  function withContext(message: LogsMessage) {
+    return deepMerge(
+      {
+        date: new Date().getTime(),
+        session_id: session.getId(),
+        view: {
+          referrer: document.referrer,
+          url: window.location.href,
+        },
+      },
+      globalContextProvider(),
+      getRUMInternalContext() as Context,
+      message
+    ) as Context
+  }
+
+  return {
+    add(message: LogsMessage) {
+      const contextualizedMessage = withContext(message)
+      primaryBatch.add(contextualizedMessage)
+      if (replicaBatch) {
+        replicaBatch.add(contextualizedMessage)
+      }
+    },
+  }
 }
 
 let customLoggers: { [name: string]: Logger }
@@ -174,6 +206,10 @@ export class Logger {
     this.loggerContext[key] = value
   }
 
+  removeContext(key: string) {
+    delete this.loggerContext[key]
+  }
+
   setHandler(handler: HandlerType) {
     this.handler = this.handlers[handler]
   }
@@ -184,10 +220,10 @@ export class Logger {
 }
 
 interface Rum {
-  getInternalContext: () => object
+  getInternalContext: (startTime?: number) => Context
 }
 
-function getRUMInternalContext(): object | undefined {
+function getRUMInternalContext(startTime?: number): Context | undefined {
   const rum = (window as any).DD_RUM as Rum
-  return rum && rum.getInternalContext ? rum.getInternalContext() : undefined
+  return rum && rum.getInternalContext ? rum.getInternalContext(startTime) : undefined
 }

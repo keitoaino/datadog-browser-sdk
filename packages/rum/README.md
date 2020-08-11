@@ -7,11 +7,11 @@ Datadog browser rum library.
 ### NPM
 
 ```
-import { datadogRum } from '@keitoaino/datadog-browser-rum'
+import { Datacenter, datadogRum } from '@keitoaino/datadog-browser-rum'
 datadogRum.init({
   applicationId: 'XXX',
   clientToken: 'XXX',
-  datacenter: 'us',
+  datacenter: Datacenter.US,
   resourceSampleRate: 100,
   sampleRate: 100
 })

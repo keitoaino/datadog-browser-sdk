@@ -3,20 +3,19 @@ import {
   DEFAULT_CONFIGURATION,
   ErrorMessage,
   isIE,
-  RequestCompleteEvent,
   SPEC_ENDPOINTS,
 } from '@keitoaino/datadog-browser-core'
 import sinon from 'sinon'
 
 import { LifeCycle, LifeCycleEventType } from '../src/lifeCycle'
-import { handleResourceEntry, RumEvent, RumResourceEvent } from '../src/rum'
-import { PAGE_ACTIVITY_VALIDATION_DELAY } from '../src/trackPageActivities'
-import { UserAction, UserActionType } from '../src/userActionCollection'
+import { RequestCompleteEvent } from '../src/requestCollection'
+import { handleResourceEntry, RawRumEvent, RumEvent, RumResourceEvent } from '../src/rum'
+import { AutoUserAction, CustomUserAction, UserActionType } from '../src/userActionCollection'
 import { SESSION_KEEP_ALIVE_INTERVAL, THROTTLE_VIEW_UPDATE_PERIOD } from '../src/viewCollection'
 import { setup, TestSetupBuilder } from './specHelper'
 
-function getEntry(addRumEvent: (event: RumEvent) => void, index: number) {
-  return (addRumEvent as jasmine.Spy).calls.argsFor(index)[0] as RumEvent
+function getEntry(handler: (startTime: number, event: RumEvent) => void, index: number) {
+  return (handler as jasmine.Spy).calls.argsFor(index)[1] as RumEvent
 }
 
 function getServerRequestBodies<T>(server: sinon.SinonFakeServer) {
@@ -34,23 +33,26 @@ function getRumMessage(server: sinon.SinonFakeServer, index: number) {
 }
 
 interface ExpectedRequestBody {
+  application_id: string
+  date: number
   evt: {
     category: string
   }
   session_id: string
   view: {
     id: string
+    referrer: string
   }
 }
 
 describe('rum handle performance entry', () => {
-  let addRumEvent: (event: RumEvent) => void
+  let handler: (startTime: number, event: RawRumEvent) => void
 
   beforeEach(() => {
     if (isIE()) {
       pending('no full rum support')
     }
-    addRumEvent = jasmine.createSpy()
+    handler = jasmine.createSpy()
   })
   ;[
     {
@@ -92,10 +94,10 @@ describe('rum handle performance entry', () => {
         handleResourceEntry(
           configuration as Configuration,
           entry as PerformanceResourceTiming,
-          addRumEvent,
+          handler,
           new LifeCycle()
         )
-        const entryAdded = (addRumEvent as jasmine.Spy).calls.all().length !== 0
+        const entryAdded = (handler as jasmine.Spy).calls.all().length !== 0
         expect(entryAdded).toEqual(expectEntryToBeAdded)
       })
     }
@@ -140,10 +142,10 @@ describe('rum handle performance entry', () => {
         handleResourceEntry(
           configuration as Configuration,
           entry as PerformanceResourceTiming,
-          addRumEvent,
+          handler,
           new LifeCycle()
         )
-        const resourceEvent = getEntry(addRumEvent, 0) as RumResourceEvent
+        const resourceEvent = getEntry(handler, 0) as RumResourceEvent
         expect(resourceEvent.resource.kind).toEqual(expected)
       })
     }
@@ -165,13 +167,8 @@ describe('rum handle performance entry', () => {
       secureConnectionStart: 0,
     }
 
-    handleResourceEntry(
-      configuration as Configuration,
-      entry as PerformanceResourceTiming,
-      addRumEvent,
-      new LifeCycle()
-    )
-    const resourceEvent = getEntry(addRumEvent, 0) as RumResourceEvent
+    handleResourceEntry(configuration as Configuration, entry as PerformanceResourceTiming, handler, new LifeCycle())
+    const resourceEvent = getEntry(handler, 0) as RumResourceEvent
     expect(resourceEvent.http.performance!.connect!.duration).toEqual(7 * 1e6)
     expect(resourceEvent.http.performance!.download!.duration).toEqual(75 * 1e6)
   })
@@ -194,13 +191,8 @@ describe('rum handle performance entry', () => {
         secureConnectionStart: 0,
       }
 
-      handleResourceEntry(
-        configuration as Configuration,
-        entry as PerformanceResourceTiming,
-        addRumEvent,
-        new LifeCycle()
-      )
-      const resourceEvent = getEntry(addRumEvent, 0) as RumResourceEvent
+      handleResourceEntry(configuration as Configuration, entry as PerformanceResourceTiming, handler, new LifeCycle())
+      const resourceEvent = getEntry(handler, 0) as RumResourceEvent
       expect(resourceEvent.http.performance).toBe(undefined)
     })
 
@@ -212,13 +204,8 @@ describe('rum handle performance entry', () => {
         responseStart: 100,
       }
 
-      handleResourceEntry(
-        configuration as Configuration,
-        entry as PerformanceResourceTiming,
-        addRumEvent,
-        new LifeCycle()
-      )
-      const resourceEvent = getEntry(addRumEvent, 0) as RumResourceEvent
+      handleResourceEntry(configuration as Configuration, entry as PerformanceResourceTiming, handler, new LifeCycle())
+      const resourceEvent = getEntry(handler, 0) as RumResourceEvent
       expect(resourceEvent.http.performance).toBe(undefined)
     })
   })
@@ -228,7 +215,7 @@ describe('rum session', () => {
   const FAKE_ERROR: Partial<ErrorMessage> = { message: 'test' }
   const FAKE_RESOURCE: Partial<PerformanceEntry> = { name: 'http://foo.com', entryType: 'resource' }
   const FAKE_REQUEST: Partial<RequestCompleteEvent> = { url: 'http://foo.com' }
-  const FAKE_USER_ACTION: UserAction = {
+  const FAKE_CUSTOM_USER_ACTION: CustomUserAction = {
     context: { foo: 'bar' },
     name: 'action',
     type: UserActionType.CUSTOM,
@@ -252,7 +239,6 @@ describe('rum session', () => {
   it('when tracked with resources should enable full tracking', () => {
     const { server, stubBuilder, lifeCycle } = setupBuilder
       .withPerformanceObserverStubBuilder()
-      .withViewCollection()
       .withPerformanceCollection()
       .build()
 
@@ -261,7 +247,7 @@ describe('rum session', () => {
     stubBuilder.fakeEntry(FAKE_RESOURCE as PerformanceEntry, 'resource')
     lifeCycle.notify(LifeCycleEventType.ERROR_COLLECTED, FAKE_ERROR as ErrorMessage)
     lifeCycle.notify(LifeCycleEventType.REQUEST_COMPLETED, FAKE_REQUEST as RequestCompleteEvent)
-    lifeCycle.notify(LifeCycleEventType.USER_ACTION_COLLECTED, FAKE_USER_ACTION)
+    lifeCycle.notify(LifeCycleEventType.CUSTOM_ACTION_COLLECTED, FAKE_CUSTOM_USER_ACTION)
 
     expect(server.requests.length).toEqual(4)
   })
@@ -269,12 +255,11 @@ describe('rum session', () => {
   it('when tracked without resources should not track resources', () => {
     const { server, stubBuilder, lifeCycle } = setupBuilder
       .withSession({
-        getId: () => undefined,
+        getId: () => '1234',
         isTracked: () => true,
         isTrackedWithResource: () => false,
       })
       .withPerformanceObserverStubBuilder()
-      .withViewCollection()
       .withPerformanceCollection()
       .build()
 
@@ -304,7 +289,7 @@ describe('rum session', () => {
     stubBuilder.fakeEntry(FAKE_RESOURCE as PerformanceEntry, 'resource')
     lifeCycle.notify(LifeCycleEventType.REQUEST_COMPLETED, FAKE_REQUEST as RequestCompleteEvent)
     lifeCycle.notify(LifeCycleEventType.ERROR_COLLECTED, FAKE_ERROR as ErrorMessage)
-    lifeCycle.notify(LifeCycleEventType.USER_ACTION_COLLECTED, FAKE_USER_ACTION)
+    lifeCycle.notify(LifeCycleEventType.CUSTOM_ACTION_COLLECTED, FAKE_CUSTOM_USER_ACTION)
 
     expect(server.requests.length).toEqual(0)
   })
@@ -313,12 +298,11 @@ describe('rum session', () => {
     let isTracked = true
     const { server, stubBuilder } = setupBuilder
       .withSession({
-        getId: () => undefined,
+        getId: () => '1234',
         isTracked: () => isTracked,
         isTrackedWithResource: () => isTracked,
       })
       .withPerformanceObserverStubBuilder()
-      .withViewCollection()
       .withPerformanceCollection()
       .build()
 
@@ -340,11 +324,10 @@ describe('rum session', () => {
     let isTrackedWithResource = true
     const { server, lifeCycle } = setupBuilder
       .withSession({
-        getId: () => undefined,
+        getId: () => '1234',
         isTracked: () => true,
         isTrackedWithResource: () => isTrackedWithResource,
       })
-      .withViewCollection()
       .withPerformanceCollection()
       .build()
 
@@ -370,7 +353,6 @@ describe('rum session', () => {
         isTracked: () => true,
         isTrackedWithResource: () => true,
       })
-      .withViewCollection()
       .build()
 
     const initialRequests = getServerRequestBodies<ExpectedRequestBody>(server)
@@ -390,6 +372,29 @@ describe('rum session', () => {
     expect(subsequentRequests[0].session_id).toEqual('43')
     expect(subsequentRequests[0].view.id).not.toEqual(initialRequests[0].view.id)
   })
+
+  it('when switching from not tracked to tracked, it should not send events without sessionId', () => {
+    let sessionId = undefined as string | undefined
+    let isTracked = false
+    const { server, lifeCycle } = setupBuilder
+      .withSession({
+        getId: () => sessionId,
+        isTracked: () => isTracked,
+        isTrackedWithResource: () => false,
+      })
+      .build()
+
+    server.requests = []
+    lifeCycle.notify(LifeCycleEventType.ERROR_COLLECTED, FAKE_ERROR as ErrorMessage)
+    expect(getServerRequestBodies<ExpectedRequestBody>(server).length).toEqual(0)
+
+    // it can happen without a renew session if the session is renewed on another tab
+    isTracked = true
+    sessionId = '1234'
+
+    lifeCycle.notify(LifeCycleEventType.ERROR_COLLECTED, FAKE_ERROR as ErrorMessage)
+    expect(getServerRequestBodies<ExpectedRequestBody>(server).length).toEqual(0)
+  })
 })
 
 describe('rum session keep alive', () => {
@@ -406,12 +411,11 @@ describe('rum session keep alive', () => {
       .withFakeServer()
       .withFakeClock()
       .withSession({
-        getId: () => undefined,
+        getId: () => '1234',
         isTracked: () => isSessionTracked,
         isTrackedWithResource: () => true,
       })
       .withRum()
-      .withViewCollection()
   })
 
   afterEach(() => {
@@ -464,15 +468,9 @@ describe('rum global context', () => {
   let setupBuilder: TestSetupBuilder
 
   beforeEach(() => {
-    const session = {
-      getId: () => undefined,
-      isTracked: () => true,
-      isTrackedWithResource: () => true,
-    }
     setupBuilder = setup()
       .withFakeServer()
       .withRum()
-      .withViewCollection()
   })
 
   afterEach(() => {
@@ -521,7 +519,6 @@ describe('rum user action', () => {
     setupBuilder = setup()
       .withFakeServer()
       .withRum()
-      .withViewCollection()
   })
 
   afterEach(() => {
@@ -532,12 +529,146 @@ describe('rum user action', () => {
     const { server, lifeCycle } = setupBuilder.build()
     server.requests = []
 
-    lifeCycle.notify(LifeCycleEventType.USER_ACTION_COLLECTED, {
+    lifeCycle.notify(LifeCycleEventType.CUSTOM_ACTION_COLLECTED, {
       context: { fooBar: 'foo' },
       name: 'hello',
       type: UserActionType.CUSTOM,
     })
 
     expect((getRumMessage(server, 0) as any).fooBar).toEqual('foo')
+  })
+})
+
+describe('rum context', () => {
+  const FAKE_ERROR: Partial<ErrorMessage> = { message: 'test' }
+  let setupBuilder: TestSetupBuilder
+
+  beforeEach(() => {
+    setupBuilder = setup()
+      .withFakeServer()
+      .withRum()
+  })
+
+  afterEach(() => {
+    setupBuilder.cleanup()
+  })
+
+  it('should be snake cased and added to request', () => {
+    const { server } = setupBuilder.build()
+    const initialRequests = getServerRequestBodies<ExpectedRequestBody>(server)
+    expect(initialRequests[0].application_id).toEqual('appId')
+  })
+
+  it('should be merge with event attributes', () => {
+    const { server } = setupBuilder.build()
+    const initialRequests = getServerRequestBodies<ExpectedRequestBody>(server)
+    expect(initialRequests[0].view.referrer).toBeDefined()
+    expect(initialRequests[0].view.id).toBeDefined()
+  })
+
+  it('should be overwritten by event attributes', () => {
+    const { server, lifeCycle, clock } = setupBuilder.withFakeClock().build()
+
+    const initialRequests = getServerRequestBodies<ExpectedRequestBody>(server)
+    expect(initialRequests[0].evt.category).toEqual('view')
+    const initialViewDate = initialRequests[0].date
+
+    // generate view update
+    lifeCycle.notify(LifeCycleEventType.ERROR_COLLECTED, FAKE_ERROR as ErrorMessage)
+    server.requests = []
+    clock.tick(THROTTLE_VIEW_UPDATE_PERIOD)
+
+    const subsequentRequests = getServerRequestBodies<ExpectedRequestBody>(server)
+    expect(subsequentRequests[0].evt.category).toEqual('view')
+    expect(subsequentRequests[0].date).toEqual(initialViewDate)
+  })
+})
+
+describe('rum internal context', () => {
+  let setupBuilder: TestSetupBuilder
+
+  beforeEach(() => {
+    setupBuilder = setup().withRum()
+  })
+
+  afterEach(() => {
+    setupBuilder.cleanup()
+  })
+
+  it('should return current internal context', () => {
+    const { rumApi, lifeCycle } = setupBuilder.build()
+
+    lifeCycle.notify(LifeCycleEventType.AUTO_ACTION_CREATED, { startTime: 10, id: 'fake' })
+
+    expect(rumApi.getInternalContext()).toEqual({
+      application_id: 'appId',
+      session_id: '1234',
+      user_action: {
+        id: 'fake',
+      },
+      view: {
+        id: jasmine.any(String),
+        url: window.location.href,
+      },
+    })
+  })
+
+  it('should return internal context corresponding to startTime', () => {
+    const { rumApi, lifeCycle } = setupBuilder.build()
+
+    const stubUserAction: Partial<AutoUserAction> = { duration: 10 }
+    lifeCycle.notify(LifeCycleEventType.AUTO_ACTION_CREATED, { startTime: 10, id: 'fake' })
+    lifeCycle.notify(LifeCycleEventType.AUTO_ACTION_COMPLETED, stubUserAction as AutoUserAction)
+
+    expect(rumApi.getInternalContext(15)).toEqual({
+      application_id: 'appId',
+      session_id: '1234',
+      user_action: {
+        id: 'fake',
+      },
+      view: {
+        id: jasmine.any(String),
+        url: window.location.href,
+      },
+    })
+  })
+})
+
+describe('rum event assembly', () => {
+  const FAKE_ERROR: Partial<ErrorMessage> = { message: 'test' }
+
+  let setupBuilder: TestSetupBuilder
+
+  beforeEach(() => {
+    setupBuilder = setup()
+      .withFakeServer()
+      .withRum()
+  })
+
+  afterEach(() => {
+    setupBuilder.cleanup()
+  })
+
+  it('should sets the view URL on long task events', () => {
+    const { server, lifeCycle } = setupBuilder.withFakeLocation('http://foo.com/').build()
+
+    server.requests = []
+
+    lifeCycle.notify(LifeCycleEventType.ERROR_COLLECTED, FAKE_ERROR as ErrorMessage)
+
+    expect(server.requests.length).toEqual(1)
+    expect(getRumMessage(server, 0).view.url).toEqual('http://foo.com/')
+  })
+
+  it('should keep the same URL when updating a view ended by a URL change', () => {
+    const { server } = setupBuilder.withFakeLocation('http://foo.com/').build()
+
+    server.requests = []
+
+    history.pushState({}, '', '/bar')
+
+    expect(server.requests.length).toEqual(2)
+    expect(getRumMessage(server, 0).view.url).toEqual('http://foo.com/')
+    expect(getRumMessage(server, 1).view.url).toEqual('http://foo.com/bar')
   })
 })

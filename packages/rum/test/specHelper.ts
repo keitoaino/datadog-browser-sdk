@@ -1,4 +1,6 @@
 import {
+  assign,
+  buildUrl,
   Configuration,
   DEFAULT_CONFIGURATION,
   InternalMonitoring,
@@ -8,6 +10,7 @@ import {
 import sinon from 'sinon'
 import { RumGlobal } from '../src'
 import { LifeCycle } from '../src/lifeCycle'
+import { ParentContexts, startParentContexts } from '../src/parentContexts'
 import { startPerformanceCollection } from '../src/performanceCollection'
 import { startRum } from '../src/rum'
 import { RumSession } from '../src/rumSession'
@@ -32,11 +35,13 @@ const configuration = {
 }
 
 export interface TestSetupBuilder {
+  withFakeLocation: (initialUrl: string) => TestSetupBuilder
   withSession: (session: RumSession) => TestSetupBuilder
   withRum: () => TestSetupBuilder
-  withViewCollection: (fakeLocation?: Partial<Location>) => TestSetupBuilder
+  withViewCollection: () => TestSetupBuilder
   withUserActionCollection: () => TestSetupBuilder
   withPerformanceCollection: () => TestSetupBuilder
+  withParentContexts: () => TestSetupBuilder
   withFakeClock: () => TestSetupBuilder
   withFakeServer: () => TestSetupBuilder
   withPerformanceObserverStubBuilder: () => TestSetupBuilder
@@ -52,11 +57,13 @@ export interface TestIO {
   stubBuilder: PerformanceObserverStubBuilder
   rumApi: RumApi
   clock: jasmine.Clock
+  parentContexts: ParentContexts
+  fakeLocation: Partial<Location>
 }
 
 export function setup(): TestSetupBuilder {
   let session = {
-    getId: () => undefined as string | undefined,
+    getId: () => '1234' as string | undefined,
     isTracked: () => true,
     isTrackedWithResource: () => true,
   }
@@ -69,21 +76,51 @@ export function setup(): TestSetupBuilder {
   let clock: jasmine.Clock
   let stubBuilder: PerformanceObserverStubBuilder
   let rumApi: RumApi
+  let fakeLocation: Partial<Location> = location
+  let parentContexts: ParentContexts
 
   const setupBuilder = {
+    withFakeLocation(initialUrl: string) {
+      fakeLocation = buildLocation(initialUrl, location.href)
+      spyOn(history, 'pushState').and.callFake((_: any, __: string, pathname: string) => {
+        assign(fakeLocation, buildLocation(pathname, fakeLocation.href!))
+      })
+
+      function hashchangeCallBack() {
+        fakeLocation.hash = window.location.hash
+      }
+
+      window.addEventListener('hashchange', hashchangeCallBack)
+
+      cleanupTasks.push(() => {
+        window.removeEventListener('hashchange', hashchangeCallBack)
+        window.location.hash = ''
+      })
+
+      return setupBuilder
+    },
     withSession(sessionStub: RumSession) {
       session = sessionStub
       return setupBuilder
     },
     withRum() {
-      buildTasks.push(
-        () => (rumApi = startRum('appId', lifeCycle, configuration as Configuration, session, internalMonitoringStub))
-      )
+      buildTasks.push(() => {
+        let stopRum
+        ;({ globalApi: rumApi, stop: stopRum } = startRum(
+          'appId',
+          fakeLocation as Location,
+          lifeCycle,
+          configuration as Configuration,
+          session,
+          internalMonitoringStub
+        ))
+        cleanupTasks.push(stopRum)
+      })
       return setupBuilder
     },
-    withViewCollection(fakeLocation?: Partial<Location>) {
+    withViewCollection() {
       buildTasks.push(() => {
-        const { stop } = startViewCollection((fakeLocation as Location) || location, lifeCycle, session)
+        const { stop } = startViewCollection(fakeLocation as Location, lifeCycle)
         cleanupTasks.push(stop)
       })
       return setupBuilder
@@ -97,6 +134,15 @@ export function setup(): TestSetupBuilder {
     },
     withPerformanceCollection() {
       buildTasks.push(() => startPerformanceCollection(lifeCycle, session))
+      return setupBuilder
+    },
+    withParentContexts() {
+      buildTasks.push(() => {
+        parentContexts = startParentContexts(lifeCycle, session)
+        cleanupTasks.push(() => {
+          parentContexts.stop()
+        })
+      })
       return setupBuilder
     },
     withFakeClock() {
@@ -129,11 +175,21 @@ export function setup(): TestSetupBuilder {
     build() {
       beforeBuildTasks.forEach((task) => task(lifeCycle))
       buildTasks.forEach((task) => task())
-      return { server, lifeCycle, stubBuilder, rumApi, clock }
+      return { server, lifeCycle, stubBuilder, rumApi, clock, parentContexts, fakeLocation }
     },
     cleanup() {
       cleanupTasks.forEach((task) => task())
     },
   }
   return setupBuilder
+}
+
+function buildLocation(url: string, base?: string) {
+  const urlObject = buildUrl(url, base)
+  return {
+    hash: urlObject.hash,
+    href: urlObject.href,
+    pathname: urlObject.pathname,
+    search: urlObject.search,
+  }
 }

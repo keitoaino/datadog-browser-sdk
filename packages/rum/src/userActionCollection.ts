@@ -1,7 +1,7 @@
 import { Context, DOM_EVENT, generateUUID } from '@keitoaino/datadog-browser-core'
 import { getActionNameFromElement } from './getActionNameFromElement'
 import { LifeCycle, LifeCycleEventType } from './lifeCycle'
-import { trackEventCounts } from './trackEventCounts'
+import { EventCounts, trackEventCounts } from './trackEventCounts'
 import { waitIdlePageActivity } from './trackPageActivities'
 
 export enum UserActionType {
@@ -9,20 +9,22 @@ export enum UserActionType {
   CUSTOM = 'custom',
 }
 
+type AutoUserActionType = UserActionType.CLICK
+
 export interface UserActionMeasures {
   errorCount: number
   longTaskCount: number
   resourceCount: number
 }
 
-interface CustomUserAction {
+export interface CustomUserAction {
   type: UserActionType.CUSTOM
   name: string
   context?: Context
 }
 
 export interface AutoUserAction {
-  type: UserActionType.CLICK
+  type: AutoUserActionType
   id: string
   name: string
   startTime: number
@@ -30,16 +32,14 @@ export interface AutoUserAction {
   measures: UserActionMeasures
 }
 
-export type UserAction = CustomUserAction | AutoUserAction
-
-interface PendingAutoUserAction {
-  id: string
-  startTime: number
-  stop(): void
-}
-let pendingAutoUserAction: PendingAutoUserAction | undefined
-
 export function startUserActionCollection(lifeCycle: LifeCycle) {
+  const userAction = startUserActionManagement(lifeCycle)
+
+  // New views trigger the discard of the current pending User Action
+  lifeCycle.subscribe(LifeCycleEventType.VIEW_CREATED, () => {
+    userAction.discardCurrent()
+  })
+
   addEventListener(DOM_EVENT.CLICK, processClick, { capture: true })
   function processClick(event: Event) {
     if (!(event.target instanceof Element)) {
@@ -49,82 +49,81 @@ export function startUserActionCollection(lifeCycle: LifeCycle) {
     if (!name) {
       return
     }
-    newUserAction(lifeCycle, UserActionType.CLICK, name)
-  }
 
-  // New views trigger the cancellation of the current pending User Action
-  lifeCycle.subscribe(LifeCycleEventType.VIEW_COLLECTED, () => {
-    if (pendingAutoUserAction) {
-      pendingAutoUserAction.stop()
-    }
-  })
+    userAction.create(UserActionType.CLICK, name)
+  }
 
   return {
     stop() {
-      if (pendingAutoUserAction) {
-        pendingAutoUserAction.stop()
-      }
+      userAction.discardCurrent()
       removeEventListener(DOM_EVENT.CLICK, processClick, { capture: true })
     },
   }
 }
 
-function newUserAction(lifeCycle: LifeCycle, type: UserActionType, name: string) {
-  if (pendingAutoUserAction) {
-    // Discard any new user action if another one is already occurring.
-    return
-  }
+function startUserActionManagement(lifeCycle: LifeCycle) {
+  let currentUserAction: PendingAutoUserAction | undefined
+  let currentIdlePageActivitySubscription: { stop: () => void }
 
-  const id = generateUUID()
-  const startTime = performance.now()
+  return {
+    create: (type: AutoUserActionType, name: string) => {
+      if (currentUserAction) {
+        // Ignore any new user action if another one is already occurring.
+        return
+      }
+      const pendingAutoUserAction = new PendingAutoUserAction(lifeCycle, type, name)
 
-  const { eventCounts, stop: stopEventCountsTracking } = trackEventCounts(lifeCycle)
-
-  const { stop: stopWaitIdlePageActivity } = waitIdlePageActivity(lifeCycle, (hadActivity, endTime) => {
-    if (hadActivity) {
-      lifeCycle.notify(LifeCycleEventType.USER_ACTION_COLLECTED, {
-        id,
-        name,
-        startTime,
-        type,
-        duration: endTime - startTime,
-        measures: {
-          errorCount: eventCounts.errorCount,
-          longTaskCount: eventCounts.longTaskCount,
-          resourceCount: eventCounts.resourceCount,
-        },
+      currentUserAction = pendingAutoUserAction
+      currentIdlePageActivitySubscription = waitIdlePageActivity(lifeCycle, (hadActivity, endTime) => {
+        if (hadActivity) {
+          pendingAutoUserAction.complete(endTime)
+        } else {
+          pendingAutoUserAction.discard()
+        }
+        currentUserAction = undefined
       })
-    }
-
-    stopEventCountsTracking()
-    pendingAutoUserAction = undefined
-  })
-
-  pendingAutoUserAction = {
-    id,
-    startTime,
-    stop() {
-      stopEventCountsTracking()
-      stopWaitIdlePageActivity()
-      pendingAutoUserAction = undefined
+    },
+    discardCurrent: () => {
+      if (currentUserAction) {
+        currentIdlePageActivitySubscription.stop()
+        currentUserAction.discard()
+        currentUserAction = undefined
+      }
     },
   }
 }
 
-export interface UserActionReference {
-  id: string
-}
-export function getUserActionReference(time?: number): UserActionReference | undefined {
-  if (!pendingAutoUserAction || (time !== undefined && time < pendingAutoUserAction.startTime)) {
-    return undefined
+class PendingAutoUserAction {
+  private id: string
+  private startTime: number
+  private eventCountsSubscription: { eventCounts: EventCounts; stop(): void }
+
+  constructor(private lifeCycle: LifeCycle, private type: AutoUserActionType, private name: string) {
+    this.id = generateUUID()
+    this.startTime = performance.now()
+    this.eventCountsSubscription = trackEventCounts(lifeCycle)
+    this.lifeCycle.notify(LifeCycleEventType.AUTO_ACTION_CREATED, { id: this.id, startTime: this.startTime })
   }
 
-  return { id: pendingAutoUserAction.id }
-}
+  complete(endTime: number) {
+    const eventCounts = this.eventCountsSubscription.eventCounts
+    this.lifeCycle.notify(LifeCycleEventType.AUTO_ACTION_COMPLETED, {
+      duration: endTime - this.startTime,
+      id: this.id,
+      measures: {
+        errorCount: eventCounts.errorCount,
+        longTaskCount: eventCounts.longTaskCount,
+        resourceCount: eventCounts.resourceCount,
+      },
+      name: this.name,
+      startTime: this.startTime,
+      type: this.type,
+    })
+    this.eventCountsSubscription.stop()
+  }
 
-export const $$tests = {
-  newUserAction,
-  resetUserAction() {
-    pendingAutoUserAction = undefined
-  },
+  discard() {
+    this.lifeCycle.notify(LifeCycleEventType.AUTO_ACTION_DISCARDED)
+    this.eventCountsSubscription.stop()
+  }
 }

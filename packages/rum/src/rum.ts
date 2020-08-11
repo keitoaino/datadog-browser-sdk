@@ -1,5 +1,6 @@
 import {
   Batch,
+  combine,
   Configuration,
   Context,
   ContextValue,
@@ -14,7 +15,6 @@ import {
   monitor,
   msToNs,
   Omit,
-  RequestCompleteEvent,
   RequestType,
   ResourceKind,
   withSnakeCaseKeys,
@@ -22,6 +22,8 @@ import {
 
 import { LifeCycle, LifeCycleEventType } from './lifeCycle'
 import { matchRequestTiming } from './matchRequestTiming'
+import { ActionContext, ParentContexts, startParentContexts, ViewContext } from './parentContexts'
+import { RequestCompleteEvent } from './requestCollection'
 import {
   computePerformanceResourceDetails,
   computePerformanceResourceDuration,
@@ -31,8 +33,8 @@ import {
 } from './resourceUtils'
 import { InternalContext, RumGlobal } from './rum.entry'
 import { RumSession } from './rumSession'
-import { getUserActionReference, UserActionMeasures, UserActionReference, UserActionType } from './userActionCollection'
-import { viewContext, ViewLoadingType, ViewMeasures } from './viewCollection'
+import { UserActionMeasures, UserActionType } from './userActionCollection'
+import { startViewCollection, ViewLoadingType, ViewMeasures } from './viewCollection'
 
 export interface PerformancePaintTiming extends PerformanceEntry {
   entryType: 'paint'
@@ -84,7 +86,6 @@ export interface RumResourceEvent {
     kind: ResourceKind
   }
   traceId?: string | number
-  userAction?: UserActionReference
 }
 
 export interface RumErrorEvent {
@@ -95,7 +96,6 @@ export interface RumErrorEvent {
     category: RumEventCategory.ERROR
   }
   message: string
-  userAction?: UserActionReference
 }
 
 export interface RumViewEvent {
@@ -120,7 +120,6 @@ export interface RumLongTaskEvent {
   evt: {
     category: RumEventCategory.LONG_TASK
   }
-  userAction?: UserActionReference
 }
 
 export interface RumUserActionEvent {
@@ -137,7 +136,24 @@ export interface RumUserActionEvent {
   }
 }
 
-export type RumEvent = RumErrorEvent | RumResourceEvent | RumViewEvent | RumLongTaskEvent | RumUserActionEvent
+interface RumContext {
+  applicationId: string
+  date: number
+  session: {
+    type: string
+  }
+  view: {
+    referrer: string
+  }
+}
+
+export type RawRumEvent = RumErrorEvent | RumResourceEvent | RumViewEvent | RumLongTaskEvent | RumUserActionEvent
+export type RumEvent =
+  | RumErrorEvent & ActionContext & ViewContext & RumContext
+  | RumResourceEvent & ActionContext & ViewContext & RumContext
+  | RumViewEvent & ViewContext & RumContext
+  | RumLongTaskEvent & ActionContext & ViewContext & RumContext
+  | RumUserActionEvent & ViewContext & RumContext
 
 enum SessionType {
   SYNTHETICS = 'synthetics',
@@ -146,29 +162,29 @@ enum SessionType {
 
 export function startRum(
   applicationId: string,
+  location: Location,
   lifeCycle: LifeCycle,
   configuration: Configuration,
   session: RumSession,
   internalMonitoring: InternalMonitoring
-): Omit<RumGlobal, 'init'> {
+): { globalApi: Omit<RumGlobal, 'init'>; stop: () => void } {
   let globalContext: Context = {}
 
-  internalMonitoring.setExternalContextProvider(
-    () =>
-      deepMerge(
-        {
-          application_id: applicationId,
-          session_id: viewContext.sessionId,
-          view: {
-            id: viewContext.id,
-          },
-        },
-        globalContext
-      ) as Context
-  )
+  const parentContexts = startParentContexts(lifeCycle, session)
 
-  const batch = startRumBatch(
-    configuration,
+  internalMonitoring.setExternalContextProvider(() => {
+    return deepMerge(
+      {
+        application_id: applicationId,
+      },
+      parentContexts.findView(),
+      globalContext
+    ) as Context
+  })
+
+  const batch = makeRumBatch(configuration, lifeCycle)
+  const handler = makeRumEventHandler(
+    parentContexts,
     session,
     () => ({
       applicationId,
@@ -178,111 +194,202 @@ export function startRum(
         // cf https://github.com/puppeteer/puppeteer/issues/3667
         type: getSessionType(),
       },
-      sessionId: viewContext.sessionId,
       view: {
-        id: viewContext.id,
         referrer: document.referrer,
-        url: viewContext.location.href,
       },
     }),
-    () => globalContext,
-    () => lifeCycle.notify(LifeCycleEventType.BEFORE_UNLOAD)
+    () => globalContext
   )
 
-  trackView(lifeCycle, batch.upsertRumEvent)
-  trackErrors(lifeCycle, batch.addRumEvent)
-  trackRequests(configuration, lifeCycle, session, batch.addRumEvent)
-  trackPerformanceTiming(configuration, lifeCycle, batch.addRumEvent)
-  trackCustomUserAction(lifeCycle, batch.addRumEvent)
-  trackAutoUserAction(lifeCycle, batch.addRumEvent)
+  trackRumEvents(configuration, lifeCycle, session, handler, batch)
+  startViewCollection(location, lifeCycle)
 
   return {
-    addRumGlobalContext: monitor((key: string, value: ContextValue) => {
-      globalContext[key] = value
-    }),
-    addUserAction: monitor((name: string, context?: Context) => {
-      lifeCycle.notify(LifeCycleEventType.USER_ACTION_COLLECTED, { context, name, type: UserActionType.CUSTOM })
-    }),
-    getInternalContext: monitor(
-      (): InternalContext => {
-        return {
-          application_id: applicationId,
-          session_id: viewContext.sessionId,
-          user_action: getUserActionReference(),
-          view: {
-            id: viewContext.id,
-          },
+    globalApi: {
+      addRumGlobalContext: monitor((key: string, value: ContextValue) => {
+        globalContext[key] = value
+      }),
+      addUserAction: monitor((name: string, context?: Context) => {
+        lifeCycle.notify(LifeCycleEventType.CUSTOM_ACTION_COLLECTED, { context, name, type: UserActionType.CUSTOM })
+      }),
+      getInternalContext: monitor(
+        (startTime?: number): InternalContext => {
+          return (withSnakeCaseKeys(deepMerge(
+            { applicationId },
+            parentContexts.findView(startTime),
+            parentContexts.findAction(startTime)
+          ) as Context) as unknown) as InternalContext
         }
-      }
-    ),
-    setRumGlobalContext: monitor((context: Context) => {
-      globalContext = context
-    }),
-  }
-}
-
-function startRumBatch(
-  configuration: Configuration,
-  session: RumSession,
-  rumContextProvider: () => Context,
-  globalContextProvider: () => Context,
-  beforeUnloadCallback: () => void
-) {
-  const batch = new Batch<Context>(
-    new HttpRequest(configuration.rumEndpoint, configuration.batchBytesLimit, true),
-    configuration.maxBatchSize,
-    configuration.batchBytesLimit,
-    configuration.maxMessageSize,
-    configuration.flushTimeout,
-    () => deepMerge(withSnakeCaseKeys(rumContextProvider()), globalContextProvider()) as Context,
-    beforeUnloadCallback
-  )
-  return {
-    addRumEvent: (event: RumEvent, context?: Context) => {
-      if (session.isTracked()) {
-        batch.add({ ...context, ...withSnakeCaseKeys((event as unknown) as Context) })
-      }
+      ),
+      setRumGlobalContext: monitor((context: Context) => {
+        globalContext = context
+      }),
     },
-    upsertRumEvent: (event: RumEvent, key: string) => {
-      if (session.isTracked()) {
-        batch.upsert(withSnakeCaseKeys((event as unknown) as Context), key)
-      }
+    stop: () => {
+      // prevent batch from previous tests to keep running and send unwanted requests
+      // could be replaced by stopping all the component when they will all have a stop method
+      batch.stop()
     },
   }
 }
 
-function trackView(lifeCycle: LifeCycle, upsertRumEvent: (event: RumViewEvent, key: string) => void) {
-  lifeCycle.subscribe(LifeCycleEventType.VIEW_COLLECTED, (view) => {
-    upsertRumEvent(
-      {
-        date: getTimestamp(view.startTime),
-        duration: msToNs(view.duration),
-        evt: {
-          category: RumEventCategory.VIEW,
-        },
-        rum: {
-          documentVersion: view.documentVersion,
-        },
-        view: {
-          loadingTime: view.loadingTime ? msToNs(view.loadingTime) : undefined,
-          loadingType: view.loadingType,
-          measures: view.measures,
-        },
-      },
-      view.id
+interface RumBatch {
+  add: (message: Context) => void
+  stop: () => void
+  upsert: (message: Context, key: string) => void
+}
+
+function makeRumBatch(configuration: Configuration, lifeCycle: LifeCycle): RumBatch {
+  const primaryBatch = createRumBatch(configuration.rumEndpoint)
+
+  let replicaBatch: Batch | undefined
+  const replica = configuration.replica
+  if (replica !== undefined) {
+    replicaBatch = createRumBatch(replica.rumEndpoint)
+  }
+
+  function createRumBatch(endpointUrl: string) {
+    return new Batch(
+      new HttpRequest(endpointUrl, configuration.batchBytesLimit, true),
+      configuration.maxBatchSize,
+      configuration.batchBytesLimit,
+      configuration.maxMessageSize,
+      configuration.flushTimeout,
+      () => lifeCycle.notify(LifeCycleEventType.BEFORE_UNLOAD)
     )
+  }
+
+  function withReplicaApplicationId(message: Context) {
+    return deepMerge(message, { application_id: replica!.applicationId }) as Context
+  }
+
+  let stopped = false
+  return {
+    add: (message: Context) => {
+      if (stopped) {
+        return
+      }
+      primaryBatch.add(message)
+      if (replicaBatch) {
+        replicaBatch.add(withReplicaApplicationId(message))
+      }
+    },
+    stop: () => {
+      stopped = true
+    },
+    upsert: (message: Context, key: string) => {
+      if (stopped) {
+        return
+      }
+      primaryBatch.upsert(message, key)
+      if (replicaBatch) {
+        replicaBatch.upsert(withReplicaApplicationId(message), key)
+      }
+    },
+  }
+}
+
+interface AssembleWithoutAction {
+  view: ViewContext
+  rum: RumContext
+}
+
+interface AssembleWithAction extends AssembleWithoutAction {
+  action?: ActionContext
+}
+
+type RumEventHandler = <T extends RawRumEvent>(
+  assemble: (event: T, { view, action, rum }: AssembleWithAction) => RumEvent,
+  callback: (message: Context, event: RumEvent) => void
+) => (startTime: number, event: T, customerContext?: Context) => void
+
+function makeRumEventHandler(
+  parentContexts: ParentContexts,
+  session: RumSession,
+  rumContextProvider: () => RumContext,
+  globalContextProvider: () => Context
+): RumEventHandler {
+  return function rumEventHandler<T extends RawRumEvent>(
+    assemble: (event: T, { view, action, rum }: AssembleWithAction) => RumEvent,
+    callback: (message: Context, event: RumEvent) => void
+  ) {
+    return (startTime: number, event: T, customerContext?: Context) => {
+      const view = parentContexts.findView(startTime)
+      if (session.isTracked() && view && view.sessionId) {
+        const action = parentContexts.findAction(startTime)
+        const rumEvent = assemble(event, { action, view, rum: rumContextProvider() })
+        const message = deepMerge(
+          globalContextProvider(),
+          customerContext,
+          withSnakeCaseKeys(rumEvent as Context)
+        ) as Context
+        callback(message, rumEvent)
+      }
+    }
+  }
+}
+
+interface BrowserWindow extends Window {
+  _DATADOG_SYNTHETICS_BROWSER?: unknown
+}
+
+function getSessionType() {
+  return (window as BrowserWindow)._DATADOG_SYNTHETICS_BROWSER === undefined ? SessionType.USER : SessionType.SYNTHETICS
+}
+
+function trackRumEvents(
+  configuration: Configuration,
+  lifeCycle: LifeCycle,
+  session: RumSession,
+  handler: RumEventHandler,
+  batch: RumBatch
+) {
+  const assembleWithoutAction = (event: RumViewEvent | RumUserActionEvent, { view, rum }: AssembleWithoutAction) =>
+    combine(rum, view, event)
+  const assembleWithAction = (
+    event: RumErrorEvent | RumResourceEvent | RumLongTaskEvent,
+    { view, action, rum }: AssembleWithAction
+  ) => combine(rum, view, action, event)
+
+  trackView(
+    lifeCycle,
+    handler(assembleWithoutAction, (message, event: RumEvent) => batch.upsert(message, event.view.id))
+  )
+  trackErrors(lifeCycle, handler(assembleWithAction, batch.add))
+  trackRequests(configuration, lifeCycle, session, handler(assembleWithAction, batch.add))
+  trackPerformanceTiming(configuration, lifeCycle, handler(assembleWithAction, batch.add))
+  trackCustomUserAction(lifeCycle, handler(assembleWithoutAction, batch.add))
+  trackAutoUserAction(lifeCycle, handler(assembleWithoutAction, batch.add))
+}
+
+function trackView(lifeCycle: LifeCycle, handler: (startTime: number, event: RumViewEvent) => void) {
+  lifeCycle.subscribe(LifeCycleEventType.VIEW_UPDATED, (view) => {
+    handler(view.startTime, {
+      date: getTimestamp(view.startTime),
+      duration: msToNs(view.duration),
+      evt: {
+        category: RumEventCategory.VIEW,
+      },
+      rum: {
+        documentVersion: view.documentVersion,
+      },
+      view: {
+        loadingTime: view.loadingTime ? msToNs(view.loadingTime) : undefined,
+        loadingType: view.loadingType,
+        measures: view.measures,
+      },
+    })
   })
 }
 
-function trackErrors(lifeCycle: LifeCycle, addRumEvent: (event: RumErrorEvent) => void) {
+function trackErrors(lifeCycle: LifeCycle, handler: (startTime: number, event: RumErrorEvent) => void) {
   lifeCycle.subscribe(LifeCycleEventType.ERROR_COLLECTED, ({ message, startTime, context }: ErrorMessage) => {
-    addRumEvent({
+    handler(startTime, {
       message,
       date: getTimestamp(startTime),
       evt: {
         category: RumEventCategory.ERROR,
       },
-      userAction: getUserActionReference(startTime),
       ...context,
     })
   })
@@ -290,51 +397,48 @@ function trackErrors(lifeCycle: LifeCycle, addRumEvent: (event: RumErrorEvent) =
 
 function trackCustomUserAction(
   lifeCycle: LifeCycle,
-  addRumEvent: (event: RumUserActionEvent, context?: Context) => void
+  handler: (startTime: number, event: RumUserActionEvent, customerContext?: Context) => void
 ) {
-  lifeCycle.subscribe(LifeCycleEventType.USER_ACTION_COLLECTED, (userAction) => {
-    if (userAction.type === UserActionType.CUSTOM) {
-      addRumEvent(
-        {
-          evt: {
-            category: RumEventCategory.USER_ACTION,
-            name: userAction.name,
-          },
-          userAction: {
-            type: userAction.type,
-          },
-        },
-        userAction.context
-      )
-    }
-  })
-}
-
-function trackAutoUserAction(lifeCycle: LifeCycle, addRumEvent: (event: RumUserActionEvent) => void) {
-  lifeCycle.subscribe(LifeCycleEventType.USER_ACTION_COLLECTED, (userAction) => {
-    if (userAction.type !== UserActionType.CUSTOM) {
-      addRumEvent({
-        date: getTimestamp(userAction.startTime),
-        duration: msToNs(userAction.duration),
+  lifeCycle.subscribe(LifeCycleEventType.CUSTOM_ACTION_COLLECTED, (userAction) => {
+    handler(
+      performance.now(),
+      {
         evt: {
           category: RumEventCategory.USER_ACTION,
           name: userAction.name,
         },
         userAction: {
-          id: userAction.id,
-          measures: userAction.measures,
           type: userAction.type,
         },
-      })
-    }
+      },
+      userAction.context
+    )
   })
 }
 
-export function trackRequests(
+function trackAutoUserAction(lifeCycle: LifeCycle, handler: (startTime: number, event: RumUserActionEvent) => void) {
+  lifeCycle.subscribe(LifeCycleEventType.AUTO_ACTION_COMPLETED, (userAction) => {
+    handler(userAction.startTime, {
+      date: getTimestamp(userAction.startTime),
+      duration: msToNs(userAction.duration),
+      evt: {
+        category: RumEventCategory.USER_ACTION,
+        name: userAction.name,
+      },
+      userAction: {
+        id: userAction.id,
+        measures: userAction.measures,
+        type: userAction.type,
+      },
+    })
+  })
+}
+
+function trackRequests(
   configuration: Configuration,
   lifeCycle: LifeCycle,
   session: RumSession,
-  addRumEvent: (event: RumEvent) => void
+  handler: (startTime: number, event: RumResourceEvent) => void
 ) {
   lifeCycle.subscribe(LifeCycleEventType.REQUEST_COMPLETED, (request: RequestCompleteEvent) => {
     if (!session.isTrackedWithResource()) {
@@ -346,7 +450,7 @@ export function trackRequests(
     const timing = matchRequestTiming(request)
     const kind = request.type === RequestType.XHR ? ResourceKind.XHR : ResourceKind.FETCH
     const startTime = timing ? timing.startTime : request.startTime
-    addRumEvent({
+    handler(startTime, {
       date: getTimestamp(startTime),
       duration: timing ? computePerformanceResourceDuration(timing) : msToNs(request.duration),
       evt: {
@@ -365,7 +469,6 @@ export function trackRequests(
         kind,
       },
       traceId: request.traceId,
-      userAction: getUserActionReference(startTime),
     })
     lifeCycle.notify(LifeCycleEventType.RESOURCE_ADDED_TO_BATCH)
   })
@@ -374,15 +477,15 @@ export function trackRequests(
 function trackPerformanceTiming(
   configuration: Configuration,
   lifeCycle: LifeCycle,
-  addRumEvent: (event: RumEvent) => void
+  handler: (startTime: number, event: RumResourceEvent | RumLongTaskEvent) => void
 ) {
   lifeCycle.subscribe(LifeCycleEventType.PERFORMANCE_ENTRY_COLLECTED, (entry) => {
     switch (entry.entryType) {
       case 'resource':
-        handleResourceEntry(configuration, entry as PerformanceResourceTiming, addRumEvent, lifeCycle)
+        handleResourceEntry(configuration, entry as PerformanceResourceTiming, handler, lifeCycle)
         break
       case 'longtask':
-        handleLongTaskEntry(entry as PerformanceLongTaskTiming, addRumEvent)
+        handleLongTaskEntry(entry as PerformanceLongTaskTiming, handler)
         break
       default:
         break
@@ -393,7 +496,7 @@ function trackPerformanceTiming(
 export function handleResourceEntry(
   configuration: Configuration,
   entry: PerformanceResourceTiming,
-  addRumEvent: (event: RumResourceEvent) => void,
+  handler: (startTime: number, event: RumResourceEvent) => void,
   lifeCycle: LifeCycle
 ) {
   if (!isValidResource(entry.name, configuration)) {
@@ -403,7 +506,7 @@ export function handleResourceEntry(
   if (includes([ResourceKind.XHR, ResourceKind.FETCH], resourceKind)) {
     return
   }
-  addRumEvent({
+  handler(entry.startTime, {
     date: getTimestamp(entry.startTime),
     duration: computePerformanceResourceDuration(entry),
     evt: {
@@ -419,26 +522,19 @@ export function handleResourceEntry(
     resource: {
       kind: resourceKind,
     },
-    userAction: getUserActionReference(entry.startTime),
   })
   lifeCycle.notify(LifeCycleEventType.RESOURCE_ADDED_TO_BATCH)
 }
 
-export function handleLongTaskEntry(entry: PerformanceLongTaskTiming, addRumEvent: (event: RumLongTaskEvent) => void) {
-  addRumEvent({
+function handleLongTaskEntry(
+  entry: PerformanceLongTaskTiming,
+  handler: (startTime: number, event: RumLongTaskEvent) => void
+) {
+  handler(entry.startTime, {
     date: getTimestamp(entry.startTime),
     duration: msToNs(entry.duration),
     evt: {
       category: RumEventCategory.LONG_TASK,
     },
-    userAction: getUserActionReference(entry.startTime),
   })
-}
-
-interface BrowserWindow extends Window {
-  _DATADOG_SYNTHETICS_BROWSER?: unknown
-}
-
-function getSessionType() {
-  return (window as BrowserWindow)._DATADOG_SYNTHETICS_BROWSER === undefined ? SessionType.USER : SessionType.SYNTHETICS
 }
